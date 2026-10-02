@@ -28,6 +28,8 @@ export interface Relocation {
   page: { current: number; total: number; unit: 'page' | 'loc' } | null
   /** Text at the top of the view, for bookmark excerpts. */
   excerpt: string
+  /** Estimated reading time left, where the format allows a guess. */
+  minutesLeft?: { chapter: number; book: number }
 }
 
 export interface SelectionInfo {
@@ -92,6 +94,8 @@ export interface Engine {
   /** Whether the flow / typography settings mean anything for this book. */
   readonly reflowable: boolean
   readonly language: string
+  /** Where each chapter starts, as fractions of the whole book (once open). */
+  readonly chapterStarts: number[]
 
   open(
     container: HTMLElement,
@@ -101,12 +105,35 @@ export interface Engine {
 
   goTo(target: string): Promise<void>
   goToFraction(fraction: number): Promise<void>
+  /** What is at a position in the book (0..1), for previewing a jump along the progress bar. */
+  describe(fraction: number): { label: string; page: Relocation['page'] }
+  /**
+   * For books whose pages have a fixed size: zooms one step in (1) or out
+   * (-1), or back to fitting the width (0), and reports the new setting
+   * through `EngineEvents.settings`.
+   */
+  zoom?(direction: 1 | -1 | 0): void
+  /**
+   * Whether a stored location (a bookmark's) is in the part of the book that
+   * is on screen now. Only meaningful right after a `relocate`.
+   */
+  isInView(location: string): boolean
   next(): void
   prev(): void
   /** A small move: a few lines when scrolling, a page when paginated. */
   step(direction: 1 | -1): void
   /** Start / end of the book. */
   goToEdge(edge: 'start' | 'end'): void
+  /**
+   * Reports the current position (`relocate`) now if a move has not been
+   * reported yet - scrolling is only reported once it pauses.
+   */
+  flush(): void
+  /**
+   * Resolves when the moves under way are over and reported: a jump whose
+   * section is still loading, a page turn that is being animated.
+   */
+  settled(): Promise<void>
 
   setAppearance(appearance: Appearance): void
 

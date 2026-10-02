@@ -9,11 +9,20 @@ import {
   type PdfRect,
   type Settings,
 } from '@shared/types'
-import type { PDFDocumentProxy, PDFDocumentLoadingTask } from 'pdfjs-dist'
+import type { PDFDocumentProxy, PDFDocumentLoadingTask, PDFPageProxy } from 'pdfjs-dist'
 // The viewer components read pdf.js off `globalThis.pdfjsLib` as they load,
 // so the library itself (imported by ./pdfjs) has to be evaluated first.
 import { loadPdf } from './pdfjs'
-import { HYPHENATED, findInLayer, layerText } from './pdf-text'
+import {
+  HYPHENATED,
+  findInLayer,
+  fitScale,
+  layerText,
+  pageAtFraction,
+  usualPageSize,
+  zoomStep,
+  type PageSize,
+} from './pdf-text'
 import {
   EventBus,
   LinkTarget,
@@ -24,7 +33,7 @@ import {
 import 'pdfjs-dist/web/pdf_viewer.css'
 import './pdf.css'
 import { describeRange } from '../annotations/anchor'
-import { fileName } from './formats'
+import { fileName, openFailure } from './formats'
 import { PALETTES } from './appearance'
 import { mergeRects } from './rects'
 import {
@@ -32,6 +41,7 @@ import {
   type Appearance,
   type Engine,
   type EngineEvents,
+  type Relocation,
   type SearchHit,
   type SearchOptions,
   type SearchUpdate,
@@ -50,6 +60,10 @@ interface OutlineNode {
 interface PageViewLike {
   id: number
   div: HTMLDivElement
+  /** The zoom the view is drawn at (its viewport is this times the CSS-pixel size of a point). */
+  scale: number
+  pdfPage: PDFPageProxy | null
+  setPdfPage(page: PDFPageProxy): void
   viewport: {
     width: number
     height: number
@@ -82,12 +96,15 @@ interface PageText {
 type Target = { dest: string | unknown[] } | PdfLocation
 
 const DEFAULT_SCALE: Settings['pdfZoom'] = 'page-width'
+/** How long opening waits for the sizes of all pages before showing the book without them. */
+const PAGE_SIZES_WAIT = 1500
 const OVERLAY_CLASS = 'bv-pdf-overlay'
 
 const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 export class PdfEngine implements Engine {
   toc: TocItem[] = []
+  chapterStarts: number[] = []
   readonly reflowable = false
   language = ''
 
@@ -100,6 +117,8 @@ export class PdfEngine implements Engine {
   private appearance!: Appearance
   private annotations: Annotation[] = []
   private tocPages: { id: string; label: string; page: number }[] = []
+  private pages: (PDFPageProxy | undefined)[] = []
+  private usualSize: PageSize | null = null
   private texts = new Map<number, Promise<PageText>>()
   private searchRun = 0
   private speechMark: { page: number; rects: PdfRect[] } | null = null
@@ -157,17 +176,27 @@ export class PdfEngine implements Engine {
     this.linkService = linkService
 
     this.task = loadPdf(bookUrl(this.book.id, fileName(this.book.path)))
-    const pdf = await this.task.promise
+    const start = this.parseLocation(init.location)
+    let pdf: PDFDocumentProxy
+    let sizes: { rest: Promise<void> }
+    try {
+      pdf = await this.task.promise
+      sizes = await this.loadPages(pdf, start?.page ?? 1)
+    } catch (error) {
+      throw openFailure(error, this.book.path)
+    }
     if (this.destroyed) return
     this.pdf = pdf
 
-    const start = this.parseLocation(init.location)
     const ready = new Promise<void>(resolve => {
       eventBus.on(
         'pagesinit',
         () => {
-          viewer.currentScaleValue = String(this.scale)
-          if (start) this.scrollTo(start)
+          // In this order, and before pdf.js draws anything: the zoom and
+          // the place both depend on the pages having their real sizes.
+          this.sizePages()
+          this.applyScale()
+          if (start) void this.scrollTo(start)
           resolve()
         },
         { once: true },
@@ -176,6 +205,13 @@ export class PdfEngine implements Engine {
     viewer.setDocument(pdf)
     linkService.setDocument(pdf, null)
     await ready
+    // Sizes that took longer than the wait: lay the book out again around
+    // the place being read.
+    void sizes.rest.then(() => {
+      if (this.destroyed || !this.sizePages()) return
+      this.applyScale()
+      void this.scrollTo(this.last)
+    })
 
     eventBus.on('updateviewarea', ({ location }: { location: PdfLocation & { pageNumber: number } }) => {
       this.last = { page: location.pageNumber, left: location.left, top: location.top }
@@ -198,11 +234,16 @@ export class PdfEngine implements Engine {
       { signal },
     )
     let width = container.clientWidth
+    let height = container.clientHeight
     this.resizeObserver = new ResizeObserver(() => {
-      if (container.clientWidth === width) return
+      const wider = container.clientWidth !== width
+      const taller = container.clientHeight !== height
       width = container.clientWidth
-      // Fit modes follow the window; fixed zoom levels stay put.
-      if (typeof this.scale === 'string' && this.viewer) this.viewer.currentScaleValue = this.scale
+      height = container.clientHeight
+      // Fit modes follow the window (fitting the width does not care how
+      // tall it is); fixed zoom levels stay put.
+      if (typeof this.scale === 'number' || !(wider || (taller && this.scale !== 'page-width'))) return
+      this.applyScale()
     })
     this.resizeObserver.observe(container)
 
@@ -235,6 +276,74 @@ export class PdfEngine implements Engine {
     void this.task?.destroy()
   }
 
+  /* ---------- page sizes ---------- */
+
+  /**
+   * Asks for every page, which is how its size becomes known. pdf.js would
+   * only do that as pages are scrolled to, assuming the first page's size
+   * until then - and a book whose cover is smaller than the rest is then
+   * fitted to the window, and laid out, by the wrong size. This is quick
+   * (tens of milliseconds for a thousand pages), but a huge or slow file is
+   * only waited for as far as the page the book opens on, which is what the
+   * saved place is measured against: `rest` settles when everything is in.
+   */
+  private async loadPages(pdf: PDFDocumentProxy, opensOn: number): Promise<{ rest: Promise<void> }> {
+    // (a file whose first page cannot be read has nothing to show at all)
+    this.pages = [await pdf.getPage(1)]
+    const load = (number: number): Promise<void> =>
+      pdf.getPage(number).then(
+        page => {
+          this.pages[number - 1] = page
+        },
+        () => {
+          // a broken page keeps the size pdf.js assumes for it
+        },
+      )
+    const all = Promise.all(Array.from({ length: pdf.numPages - 1 }, (_, index) => load(index + 2))).then(() => {})
+    if (opensOn > 1 && opensOn <= pdf.numPages) await load(opensOn)
+    await Promise.race([all, new Promise(resolve => setTimeout(resolve, PAGE_SIZES_WAIT))])
+    return { rest: all }
+  }
+
+  /** Gives the page views the sizes known by now. True if that changed any. */
+  private sizePages(): boolean {
+    const viewer = this.viewer
+    if (!viewer) return false
+    let changed = false
+    for (let index = 0; index < viewer.pagesCount; index++) {
+      const page = this.pages[index]
+      const view = viewer.getPageView(index) as PageViewLike | undefined
+      if (!page || !view || view.pdfPage) continue
+      view.setPdfPage(page)
+      changed = true
+    }
+    if (changed) this.usualSize = null
+    return changed
+  }
+
+  /**
+   * Puts the chosen zoom into effect. The fit modes go by the book's usual
+   * page size rather than, as pdf.js has it, by the page in view. pdf.js
+   * keeps the top left corner of the view where it is.
+   */
+  private applyScale(): void {
+    const { viewer, container, scale } = this
+    if (!viewer?.pagesCount || !container) return
+    if (typeof scale === 'number') {
+      viewer.currentScale = scale
+      return
+    }
+    this.usualSize ??= usualPageSize(
+      Array.from({ length: viewer.pagesCount }, (_, index) => {
+        const view = viewer.getPageView(index) as PageViewLike
+        return { width: view.viewport.width / view.scale, height: view.viewport.height / view.scale }
+      }),
+    )
+    const fitted = fitScale(scale, this.usualSize, { width: container.clientWidth, height: container.clientHeight })
+    if (Number.isFinite(fitted) && fitted > 0) viewer.currentScale = fitted
+    else viewer.currentScaleValue = scale
+  }
+
   /* ---------- outline ---------- */
 
   private async loadOutline(): Promise<void> {
@@ -263,6 +372,11 @@ export class PdfEngine implements Engine {
     this.toc = convert(outline)
     await Promise.all(pages)
     this.tocPages.sort((a, b) => a.page - b.page || Number(a.id) - Number(b.id))
+    const total = this.viewer?.pagesCount || 1
+    const top = new Set(this.toc.map(item => item.id))
+    this.chapterStarts = [
+      ...new Set(this.tocPages.filter(item => top.has(item.id) && item.page > 1).map(item => (item.page - 1) / total)),
+    ]
     if (!this.destroyed) this.emitRelocate()
   }
 
@@ -302,10 +416,24 @@ export class PdfEngine implements Engine {
     }
   }
 
-  private scrollTo({ page, left, top }: PdfLocation): void {
+  /**
+   * Makes sure a page is laid out at its own size. pdf.js gives every page
+   * the size of the first until it has loaded it, and a place inside a page
+   * worked out from the wrong size is off by the difference.
+   */
+  private async measure(page: number): Promise<void> {
+    const view = this.pageView(page)
+    if (!view || view.pdfPage || !this.pdf) return
+    const loaded = await this.pdf.getPage(page).catch(() => null)
+    if (loaded && !view.pdfPage && !this.destroyed) view.setPdfPage(loaded)
+  }
+
+  private async scrollTo({ page, left, top }: PdfLocation): Promise<void> {
     const viewer = this.viewer
     if (!viewer) return
     const pageNumber = Math.min(Math.max(1, page), viewer.pagesCount)
+    if (top != null) await this.measure(pageNumber)
+    if (this.destroyed) return
     viewer.scrollPageIntoView({
       pageNumber,
       destArray: top == null ? undefined : [null, { name: 'XYZ' }, left ?? null, top, null],
@@ -333,13 +461,19 @@ export class PdfEngine implements Engine {
     const { page } = this.last
     const toc = this.tocAt(page)
     const text = this.texts.get(page)
+    const container = this.container
+    // (the top of the view never gets to the end of the last page)
+    const atEnd =
+      !!container && container.scrollTop + container.clientHeight >= container.scrollHeight - 1
     const relocate = (excerpt: string) =>
       this.events.relocate({
-        fraction: Math.min(1, (page - 1 + this.fractionInPage(page)) / total),
+        fraction: atEnd ? 1 : Math.min(1, (page - 1 + this.fractionInPage(page)) / total),
         location: JSON.stringify(this.last),
         tocId: toc?.id ?? null,
         label: toc?.label ?? '',
-        page: { current: page, total, unit: 'page' },
+        // (the page that fills the view, which need not be the one a sliver
+        // of which is left at the top edge)
+        page: { current: viewer.currentPageNumber || page, total, unit: 'page' },
         excerpt,
       })
     relocate('')
@@ -357,18 +491,38 @@ export class PdfEngine implements Engine {
       return
     }
     if ('dest' in parsed) await this.linkService?.goToDestination(parsed.dest as string)
-    else if (Number.isInteger(parsed.page)) this.scrollTo(parsed)
+    else if (Number.isInteger(parsed.page)) await this.scrollTo(parsed)
   }
 
   async goToFraction(fraction: number): Promise<void> {
     const viewer = this.viewer
     const container = this.container
     if (!viewer || !container) return
-    const exact = Math.min(0.9999, Math.max(0, fraction)) * viewer.pagesCount
-    const page = Math.floor(exact) + 1
+    const { page, within } = pageAtFraction(fraction, viewer.pagesCount)
     const view = this.pageView(page)
     if (!view) return
-    container.scrollTop = view.div.offsetTop + (exact - Math.floor(exact)) * view.div.offsetHeight
+    container.scrollTop = view.div.offsetTop + within * view.div.offsetHeight
+  }
+
+  describe(fraction: number): { label: string; page: Relocation['page'] } {
+    const total = this.viewer?.pagesCount || 1
+    const { page } = pageAtFraction(fraction, total)
+    return { label: this.tocAt(page)?.label ?? '', page: { current: page, total, unit: 'page' } }
+  }
+
+  /**
+   * Whether the spot a bookmark was made at is on screen - or, as in the
+   * scroller, still less than a good part of a screen above it.
+   */
+  isInView(location: string): boolean {
+    const target = this.parseLocation(location)
+    const container = this.container
+    const view = target && this.pageView(target.page)
+    if (!target || !container || !view) return false
+    let y = view.div.offsetTop + view.div.clientTop
+    if (target.top != null) y += view.viewport.convertToViewportPoint(target.left ?? 0, target.top)[1]
+    const { scrollTop, clientHeight } = container
+    return y >= scrollTop - clientHeight * 0.4 && y < scrollTop + clientHeight
   }
 
   private scrollBy(amount: number, smooth: boolean): void {
@@ -388,7 +542,15 @@ export class PdfEngine implements Engine {
   }
 
   goToEdge(edge: 'start' | 'end'): void {
-    if (this.viewer) this.scrollTo({ page: edge === 'start' ? 1 : this.viewer.pagesCount })
+    if (this.viewer) void this.scrollTo({ page: edge === 'start' ? 1 : this.viewer.pagesCount })
+  }
+
+  flush(): void {
+    // nothing to catch up on: pdf.js reports a scroll within a frame
+  }
+
+  settled(): Promise<void> {
+    return Promise.resolve()
   }
 
   focus(): void {
@@ -408,25 +570,29 @@ export class PdfEngine implements Engine {
 
   setAppearance(appearance: Appearance): void {
     const zoom = appearance.settings.pdfZoom
-    const zoomChanged = zoom !== this.appearance.settings.pdfZoom
     this.appearance = appearance
     this.applyTheme()
-    if (zoomChanged && this.viewer) {
-      this.scale = zoom
-      this.viewer.currentScaleValue = String(zoom)
-    }
+    // (a zoom made here, with zoom() or the wheel, comes back as a setting:
+    // it is in effect already)
+    if (zoom === this.scale) return
+    this.scale = zoom
+    this.applyScale()
+  }
+
+  zoom(direction: 1 | -1 | 0): void {
+    const viewer = this.viewer
+    if (!viewer) return
+    // a step is taken from the zoom in effect, whatever fit mode produced it
+    this.scale = direction === 0 ? DEFAULT_SCALE : zoomStep(viewer.currentScale, direction)
+    this.applyScale()
+    // keep the settings (and the zoom menu) in step
+    this.events.settings({ pdfZoom: this.scale })
   }
 
   private onWheel(event: WheelEvent): void {
-    const viewer = this.viewer
-    if (!event.ctrlKey || !viewer) return
+    if (!event.ctrlKey || !this.viewer) return
     event.preventDefault()
-    const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1
-    const scale = Math.min(6, Math.max(0.25, viewer.currentScale * factor))
-    this.scale = Math.round(scale * 100) / 100
-    viewer.currentScale = this.scale
-    // keep the settings (and the zoom menu) in step
-    this.events.settings({ pdfZoom: this.scale })
+    this.zoom(event.deltaY < 0 ? 1 : -1)
   }
 
   /* ---------- selection and annotations ---------- */
@@ -612,7 +778,7 @@ export class PdfEngine implements Engine {
     const left = Math.min(...rects.map(rect => rect[0]))
     const view = this.pageView(page)
     // Leave some room above the highlight.
-    this.scrollTo({ page, left: left - 40, top: top + (view ? this.pageHeight(view) * 0.12 : 80) })
+    await this.scrollTo({ page, left: left - 40, top: top + (view ? this.pageHeight(view) * 0.12 : 80) })
     await new Promise(resolve => setTimeout(resolve, 120))
     const rect = this.annotationRect(annotation)
     if (rect) this.events.annotationClick(annotation.id, rect)
@@ -733,7 +899,7 @@ export class PdfEngine implements Engine {
         if (box && container) {
           const frame = container.getBoundingClientRect()
           if (box.top < frame.top + 20 || box.bottom > frame.bottom - frame.height * 0.25)
-            this.scrollTo({ page, top: top + this.pageHeight(view) * 0.15 })
+            void this.scrollTo({ page, top: top + this.pageHeight(view) * 0.15 })
         }
         return
       }
@@ -776,7 +942,7 @@ export class PdfEngine implements Engine {
           language: this.language || 'en',
           show: () => {
             if (this.last.page !== current && !this.pageView(current)?.textLayer?.div.childElementCount)
-              this.scrollTo({ page: current })
+              void this.scrollTo({ page: current })
             void this.markSpeech(current, sentence)
           },
         })

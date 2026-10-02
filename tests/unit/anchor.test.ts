@@ -125,6 +125,51 @@ describe('CFIs', () => {
     // text anchoring ignores the injected node as well
     expect(textMap(live.body).text).toBe(textMap(pristine.body).text)
   })
+
+  it('of a range that begins or ends inside a rendered formula still resolve', () => {
+    const html = '<html><body><p>Energy is \\(E = mc^2\\) as everyone knows.</p><p>The end.</p></body></html>'
+    const pristine = parse(html)
+    const live = parse(html)
+    const text = live.querySelector('p')!.firstChild as Text
+    const tail = text.splitText(text.data.indexOf(' as everyone'))
+    const tex = text.splitText(text.data.indexOf('\\('))
+    const wrapper = live.createElement('span')
+    wrapper.setAttribute(SKIP, '')
+    tex.replaceWith(wrapper)
+    wrapper.append(tex)
+    const formula = live.createElement('mjx-container')
+    formula.setAttribute(IGNORE, '')
+    formula.innerHTML = '<svg><g><path></path><g><path></path></g></g></svg>'
+    tail.before(formula)
+    const inside = formula.querySelector('g g')!
+    const last = live.querySelectorAll('p')[1].firstChild as Text
+
+    // what is on screen from the formula on: the top of a view, say
+    const from = live.createRange()
+    from.setStart(inside, 0)
+    from.setEnd(last, 3)
+    // on the page before its math is rendered - where a book is reopened -
+    // that is from the end of the formula's source
+    expect(toRange(pristine, CFI.parse(fromRange(from))).toString()).toBe(' as everyone knows.The')
+    expect(toRange(live, CFI.parse(fromRange(from))).toString()).toBe(' as everyone knows.The')
+
+    const upTo = live.createRange()
+    upTo.setStart(text, 0)
+    upTo.setEnd(inside, 1)
+    expect(toRange(pristine, CFI.parse(fromRange(upTo))).toString()).toBe('Energy is \\(E = mc^2\\)')
+  })
+
+  it('whose end is no longer in the document resolve to their start', () => {
+    const doc = parse(PAGE)
+    const cfi = fromRange(rangeOf(doc, 'quick brown fox'))
+    const parts = CFI.parse(cfi)
+    if (!('parent' in parts)) throw new Error('expected a range CFI')
+    // (the kind of path a range ending inside a formula used to be given)
+    parts.end = [[{ index: 26 }, { index: 4 }, { index: 1, offset: 1 }]]
+    const range = toRange(doc, parts)
+    expect(range.collapsed).toBe(true)
+    expect(range.startContainer.nodeValue?.slice(range.startOffset, range.startOffset + 15)).toBe('quick brown fox')
+  })
 })
 
 describe('repeated text with reflowed whitespace', () => {

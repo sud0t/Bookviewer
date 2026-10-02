@@ -1,5 +1,16 @@
 import type { FileLike } from 'foliate-js/types'
 
+/** A request for a book's bytes that the main process turned down (404: the file is gone). */
+export class FetchError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message)
+    this.name = 'FetchError'
+  }
+}
+
 const CHUNK = 1024 * 1024
 const MAX_CACHED_CHUNKS = 24
 /** Below this, just download the file: simpler, and plenty fast locally. */
@@ -29,7 +40,7 @@ export class RemoteFile implements FileLike {
       const start = index * CHUNK
       const end = Math.min(this.size, start + CHUNK) - 1
       chunk = fetch(this.url, { headers: { range: `bytes=${start}-${end}` } }).then(async res => {
-        if (!res.ok) throw new Error(`Reading ${this.name} failed: ${res.status}`)
+        if (!res.ok) throw new FetchError(`Reading ${this.name} failed: ${res.status}`, res.status)
         return new Uint8Array(await res.arrayBuffer())
       })
       chunk.catch(() => this.chunks.delete(index))
@@ -75,11 +86,11 @@ export class RemoteFile implements FileLike {
 /** Opens a `book://` URL as a file: fully in memory when small, lazily when big. */
 export async function openRemote(url: string, name: string): Promise<FileLike> {
   const head = await fetch(url, { method: 'HEAD' })
-  if (!head.ok) throw new Error(`Opening ${name} failed: ${head.status}`)
+  if (!head.ok) throw new FetchError(`Opening ${name} failed: ${head.status}`, head.status)
   const size = Number(head.headers.get('content-length') ?? 0)
   if (size > EAGER_LIMIT && head.headers.get('accept-ranges') === 'bytes')
     return new RemoteFile(url, name, size)
   const res = await fetch(url)
-  if (!res.ok) throw new Error(`Opening ${name} failed: ${res.status}`)
+  if (!res.ok) throw new FetchError(`Opening ${name} failed: ${res.status}`, res.status)
   return new File([await res.blob()], name)
 }

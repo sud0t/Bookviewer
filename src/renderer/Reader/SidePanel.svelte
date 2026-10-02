@@ -24,6 +24,7 @@
     onnavigate,
     onannotation,
     onbookmark,
+    onremovebookmark,
     onexport,
     onclose,
   }: {
@@ -35,6 +36,7 @@
     onnavigate: (target: string) => void
     onannotation: (annotation: Annotation) => void
     onbookmark: (bookmark: Bookmark) => void
+    onremovebookmark: (bookmark: Bookmark) => void
     onexport: (format: ExportFormat) => void
     onclose: () => void
   } = $props()
@@ -57,6 +59,30 @@
   let run = 0
 
   const total = $derived(groups.reduce((sum, group) => sum + group.hits.length, 0))
+  /** The result the reader is on (counting through all groups), or -1. */
+  let active = $state(-1)
+  /** Index of each group's first hit in that count. */
+  const offsets = $derived.by(() => {
+    let sum = 0
+    return groups.map(group => (sum += group.hits.length) - group.hits.length)
+  })
+  let results = $state<HTMLElement>()
+
+  function show(index: number) {
+    const hit = groups.flatMap(group => group.hits)[index]
+    if (!hit) return
+    active = index
+    onnavigate(hit.target)
+    requestAnimationFrame(() =>
+      results?.querySelector('[aria-current="true"]')?.scrollIntoView({ block: 'nearest' }),
+    )
+  }
+
+  /** Next (1) or previous (-1) result, going round at the ends. */
+  function step(direction: 1 | -1) {
+    if (!total) return
+    show(active < 0 ? (direction > 0 ? 0 : total - 1) : (active + direction + total) % total)
+  }
 
   export function focusSearch() {
     tab = 'search'
@@ -70,6 +96,7 @@
     const query = searchQuery.trim()
     const current = ++run
     groups = []
+    active = -1
     searched = query
     if (!query) {
       progress = null
@@ -94,6 +121,7 @@
     searchQuery = ''
     searched = ''
     groups = []
+    active = -1
     progress = null
     engine.clearSearch()
     input?.focus()
@@ -115,7 +143,8 @@
 </script>
 
 <aside class="panel">
-  <div class="tabs" role="tablist">
+  <div class="tabs">
+    <div class="tablist" role="tablist" aria-label="Side panel">
     {#each TABS as item (item.id)}
       <button
         role="tab"
@@ -125,13 +154,16 @@
         onclick={() => (item.id === 'search' ? focusSearch() : (tab = item.id))}
       >
         <Icon name={item.icon} size={16} />
+        <span class="tab-label">{item.label}</span>
         {#if item.id === 'notes' && store.annotations.length}
           <span class="count">{store.annotations.length}</span>
+        {:else if item.id === 'bookmarks' && store.bookmarks.length}
+          <span class="count">{store.bookmarks.length}</span>
         {/if}
       </button>
     {/each}
-    <span class="spacer"></span>
-    <button class="icon-btn" title="Close panel" aria-label="Close panel" onclick={onclose}>
+    </div>
+    <button class="icon-btn close" title="Close panel" aria-label="Close panel" onclick={onclose}>
       <Icon name="x" size={16} />
     </button>
   </div>
@@ -141,7 +173,9 @@
       {#if flat(engine.toc)}
         <TocTree items={engine.toc} current={tocId} onselect={item => item.target && onnavigate(item.target)} />
       {:else}
-        <p class="empty muted">This book has no table of contents.</p>
+        <p class="empty muted">
+          This book has no table of contents. Use Search, or the bar along the bottom, to move around.
+        </p>
       {/if}
     </div>
   {:else if tab === 'notes'}
@@ -164,11 +198,12 @@
     </div>
     {#if store.annotations.length}
       <div class="footer">
-        <button class="btn" onclick={() => onexport('markdown')}>
-          <Icon name="export" size={15} /> Markdown
+        <span class="muted">Export as</span>
+        <button class="btn" title="Save highlights, notes and bookmarks as a Markdown file" onclick={() => onexport('markdown')}>
+          Markdown
         </button>
-        <button class="btn" onclick={() => onexport('json')}>
-          <Icon name="export" size={15} /> JSON
+        <button class="btn" title="Save highlights, notes and bookmarks as a JSON file" onclick={() => onexport('json')}>
+          JSON
         </button>
       </div>
     {/if}
@@ -185,7 +220,7 @@
             class="icon-btn"
             title="Remove bookmark"
             aria-label="Remove bookmark"
-            onclick={() => store.removeBookmark(bookmark.id)}
+            onclick={() => onremovebookmark(bookmark)}
           >
             <Icon name="trash" size={15} />
           </button>
@@ -207,8 +242,15 @@
           class="input"
           type="text"
           placeholder="Search in book"
+          aria-label="Search in book"
           bind:this={input}
           bind:value={searchQuery}
+          onkeydown={event => {
+            // Enter on a search that has already run walks through its results
+            if (event.key !== 'Enter' || searchQuery.trim() !== searched || !total) return
+            event.preventDefault()
+            step(event.shiftKey ? -1 : 1)
+          }}
         />
         {#if searchQuery}
           <button type="button" class="icon-btn clear" aria-label="Clear search" onclick={clearSearch}>
@@ -224,16 +266,42 @@
     {#if progress != null}
       <div class="progress"><div style:width="{progress * 100}%"></div></div>
     {/if}
-    <div class="body scroll">
-      {#if searched}
-        <p class="summary muted">
-          {total} result{total === 1 ? '' : 's'} for “{searched}”{progress != null ? '…' : ''}
+    {#if searched}
+      <div class="stepper">
+        <span class="summary muted" role="status">
+          {#if total}
+            {active >= 0 ? `${active + 1} of ` : ''}{total} result{total === 1 ? '' : 's'}{progress != null ? '…' : ''}
+          {:else if progress != null}
+            Searching…
+          {:else}
+            No results
+          {/if}
+        </span>
+        <button class="icon-btn" title="Previous result (Shift+Enter)" aria-label="Previous result" disabled={!total} onclick={() => step(-1)}>
+          <Icon name="chevron-up" size={16} />
+        </button>
+        <button class="icon-btn" title="Next result (Enter)" aria-label="Next result" disabled={!total} onclick={() => step(1)}>
+          <Icon name="chevron-down" size={16} />
+        </button>
+      </div>
+    {/if}
+    <div class="body scroll" bind:this={results}>
+      {#if searched && !total && progress == null}
+        <p class="empty muted">
+          Nothing in this book matches “{searched}”. Check the spelling{matchCase || wholeWords
+            ? ', or turn off Match case and Whole words'
+            : ''}.
         </p>
       {/if}
       {#each groups as group, g (g)}
         <div class="group-label ellipsis">{group.label}</div>
         {#each group.hits as hit, i (hitKey(hit, i))}
-          <button class="hit" onclick={() => onnavigate(hit.target)}>
+          <button
+            class="hit"
+            class:active={offsets[g] + i === active}
+            aria-current={offsets[g] + i === active ? 'true' : undefined}
+            onclick={() => show(offsets[g] + i)}
+          >
             {hit.pre}<mark>{hit.match}</mark>{hit.post}
           </button>
         {/each}
@@ -255,40 +323,59 @@
     display: flex;
     align-items: center;
     gap: 2px;
-    padding: 6px;
+    padding: 5px 4px 5px 6px;
     border-bottom: 1px solid var(--border);
+  }
+  .tablist {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    gap: 2px;
   }
   .tabs [role='tab'] {
     position: relative;
+    flex: 1;
+    min-width: 0;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    justify-content: center;
-    width: 38px;
-    height: 32px;
+    gap: 2px;
+    padding: 5px 2px 4px;
     border-radius: var(--radius-sm);
     color: var(--fg-muted);
+  }
+  .tab-label {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 11px;
+    line-height: 1.2;
   }
   .tabs [role='tab']:hover {
     background: var(--hover);
   }
   .tabs [role='tab'].active {
-    background: var(--active);
+    background: var(--accent-soft);
     color: var(--accent);
   }
   .count {
     position: absolute;
-    top: 1px;
-    right: 1px;
-    min-width: 14px;
-    padding: 0 3px;
-    border-radius: 7px;
-    font-size: 9px;
-    line-height: 14px;
-    background: var(--accent);
-    color: var(--accent-fg);
+    top: 2px;
+    left: calc(50% + 6px);
+    min-width: 15px;
+    padding: 0 4px;
+    border-radius: 8px;
+    font-size: 9.5px;
+    font-weight: 600;
+    line-height: 15px;
+    background: var(--accent-strong);
+    /* dark on orange: white does not have the contrast */
+    color: #2b1203;
   }
-  .spacer {
-    flex: 1;
+  .close {
+    width: 28px;
+    height: 28px;
+    color: var(--fg-muted);
   }
   .body {
     flex: 1;
@@ -352,9 +439,11 @@
   }
   .footer {
     display: flex;
+    align-items: center;
     gap: 6px;
-    padding: 8px;
+    padding: 8px 8px 8px 12px;
     border-top: 1px solid var(--border);
+    font-size: 12.5px;
   }
   .footer .btn {
     flex: 1;
@@ -390,20 +479,27 @@
     align-items: center;
     gap: 5px;
   }
-  .options input {
-    accent-color: var(--accent);
-  }
   .progress {
     height: 2px;
     background: var(--border);
   }
   .progress div {
     height: 100%;
-    background: var(--accent);
+    background: var(--accent-strong);
     transition: width 0.15s;
   }
+  .stepper {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 6px 2px 14px;
+  }
+  .stepper .icon-btn {
+    width: 28px;
+    height: 28px;
+  }
   .summary {
-    padding: 4px 8px 6px;
+    flex: 1;
     font-size: 12px;
   }
   .group-label {
@@ -424,9 +520,12 @@
   .hit:hover {
     background: var(--hover);
   }
+  .hit.active {
+    background: var(--accent-soft);
+  }
   mark {
-    background: color-mix(in srgb, var(--hl-yellow) 60%, transparent);
-    color: inherit;
+    background: var(--hl-yellow);
+    color: #1e1b18;
     border-radius: 2px;
   }
 </style>

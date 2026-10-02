@@ -19,6 +19,7 @@ import { anchorQuote, describeRange, rangeMatches } from '../annotations/anchor'
 import { CFI, fromRange, toRange as cfiToRange } from './cfi'
 import { ipc } from '../lib/ipc'
 import { ReflowEngine, type Locator } from './epub'
+import { OpenError } from './formats'
 import { preparePage, type Highlighter } from './webpage'
 import type { Engine, EngineEvents } from './types'
 
@@ -229,7 +230,15 @@ export function webLocator(manifest: WebBookManifest): Locator {
 
 export async function openWebBook(book: Book, events: EngineEvents): Promise<Engine> {
   const manifest = await ipc.invoke('books:manifest', book.id)
-  if (!manifest?.pages.length) throw new Error('This HTML book has no readable pages')
+  if (!manifest?.pages.length)
+    throw new Error('No pages to read were found here. If the files have changed, use Rescan folders in the library.')
+  // The list of pages is remembered from the last scan; the pages may be gone.
+  const exists = async (page: { href: string }) =>
+    (await fetch(bookUrl(book.id, page.href), { method: 'HEAD' }).catch(() => null))?.status !== 404
+  if (!(await exists(manifest.pages[0])) && !(await exists(manifest.pages[manifest.pages.length - 1]))) {
+    console.warn(`Opening ${book.path} failed: its pages are not there (404)`)
+    throw new OpenError('missing', book.path)
+  }
   const { default: hljs } = await import('highlight.js/lib/common')
   const highlight: Highlighter = (code, language) => {
     if (!hljs.getLanguage(language)) return null

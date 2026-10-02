@@ -93,7 +93,16 @@ export function makeEpub(): Buffer {
   <li><a href="ch3.xhtml">Morning</a></li>
 </ol></nav></body></html>`,
     ],
-    ['OEBPS/ch1.xhtml', chapter('Arrival', paragraphs('arrival', 30))],
+    [
+      'OEBPS/ch1.xhtml',
+      chapter(
+        'Arrival',
+        paragraphs('arrival', 10) +
+          // one paragraph long enough to fill a screen
+          `<p>${Array.from({ length: 60 }, (_, i) => `Sentence ${i + 1} of the long watch went by like the one before it.`).join(' ')}</p>` +
+          paragraphs('settling in', 20),
+      ),
+    ],
     [
       'OEBPS/ch2.xhtml',
       chapter(
@@ -106,7 +115,8 @@ export function makeEpub(): Buffer {
   ])
 }
 
-export function makePdf(pages: string[]): Buffer {
+/** A PDF with a line of text on each page. The first page can be taller than the rest, like a scanned cover. */
+export function makePdf(pages: string[], coverHeight = 792): Buffer {
   const objects: string[] = []
   const kids = pages.map((_, i) => `${3 + i * 2} 0 R`).join(' ')
   objects.push('<< /Type /Catalog /Pages 2 0 R >>')
@@ -115,7 +125,7 @@ export function makePdf(pages: string[]): Buffer {
   pages.forEach((text, i) => {
     const stream = `BT /F1 20 Tf 72 700 Td (${text.replace(/[()\\]/g, '\\$&')}) Tj ET`
     objects.push(
-      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${4 + i * 2} 0 R /Resources << /Font << /F1 ${font} 0 R >> >> >>`,
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 ${i ? 792 : coverHeight}] /Contents ${4 + i * 2} 0 R /Resources << /Font << /F1 ${font} 0 R >> >> >>`,
     )
     objects.push(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`)
   })
@@ -154,7 +164,10 @@ export async function makeLibrary(root: string): Promise<void> {
     await writeFile(file, content)
   }
   await write('The Test Lighthouse.epub', makeEpub())
-  await write('paper.pdf', makePdf(['Hello PDF world, page one.', 'This is the second page.']))
+  await write(
+    'paper.pdf',
+    makePdf(['Hello PDF world, page one.', 'This is the second page.', 'And this is the third.'], 1100),
+  )
   await write('saved-site/book.js', '')
   await write(
     'saved-site/toc.html',

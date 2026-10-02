@@ -27,19 +27,37 @@ function httpUrl(url: string): URL {
   return parsed
 }
 
+/**
+ * What went wrong, as a short code the catalog screen turns into a sentence
+ * (see friendlyError in the renderer): only the message survives the trip
+ * across IPC. Network failures already arrive as "net::ERR_...".
+ */
+const failure = {
+  status: (response: Response) => new Error(`HTTP ${response.status}`),
+  timeout: () => new Error('timeout'),
+  tooLarge: () => new Error('too large'),
+  notABook: () => new Error('not a book'),
+}
+
 /** Fetches with a deadline that also covers reading the body. */
 async function request(url: string, accept: string, timeoutMs: number) {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, timeoutMs)
+  /** The deadline shows up as a bare "aborted"; say what it really was. */
+  const explain = (error: unknown): unknown => (timedOut ? failure.timeout() : error)
   try {
     const response = await net.fetch(httpUrl(url).href, {
       headers: { accept },
       signal: controller.signal,
     })
-    return { response, controller, done: () => clearTimeout(timer) }
+    return { response, controller, explain, done: () => clearTimeout(timer) }
   } catch (error) {
     clearTimeout(timer)
-    throw error
+    throw explain(error)
   }
 }
 
@@ -51,7 +69,7 @@ async function readLimited(
 ): Promise<Uint8Array> {
   if (Number(response.headers.get('content-length') ?? 0) > limit) {
     controller.abort()
-    throw new Error('The response is too large')
+    throw failure.tooLarge()
   }
   const chunks: Uint8Array[] = []
   let total = 0
@@ -63,7 +81,7 @@ async function readLimited(
       total += value.length
       if (total > limit) {
         controller.abort()
-        throw new Error('The response is too large')
+        throw failure.tooLarge()
       }
       chunks.push(value)
     }
@@ -78,19 +96,22 @@ async function readLimited(
 }
 
 export async function fetchOpds(url: string): Promise<OpdsResponse> {
-  const { response, controller, done } = await request(
+  const { response, controller, explain, done } = await request(
     url,
     'application/atom+xml;profile=opds-catalog, application/opds+json, application/atom+xml, application/xml;q=0.9, */*;q=0.5',
     30_000,
   )
   try {
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
+    if (!response.ok) throw failure.status(response)
     const bytes = await readLimited(response, MAX_FEED_BYTES, controller)
     return {
       url: response.url || url,
       contentType: response.headers.get('content-type') ?? '',
       body: new TextDecoder().decode(bytes),
     }
+  } catch (error) {
+    controller.abort()
+    throw explain(error)
   } finally {
     done()
   }
@@ -136,6 +157,17 @@ const safeDecode = (value: string): string => {
   }
 }
 
+/** The book extension in a download's file name (from its headers, else its URL), if it has one. */
+function namedExtension(disposition: string | null, pathname: string): string | null {
+  const fromUrl = safeDecode(pathname.split('/').pop() ?? '')
+  for (const candidate of [filenameFromDisposition(disposition), fromUrl]) {
+    if (!candidate) continue
+    if (/\.fb2\.zip$/i.test(candidate)) return '.fb2.zip'
+    if (/\.(epub|pdf|mobi|azw3?|fb2|fbz|cbz)$/i.test(candidate)) return extname(candidate).toLowerCase()
+  }
+  return null
+}
+
 /** The extension a download should get, from its headers and URL. */
 export function downloadExtension(
   contentType: string,
@@ -143,13 +175,7 @@ export function downloadExtension(
   pathname: string,
 ): string {
   const type = contentType.split(';')[0].trim().toLowerCase()
-  const fromUrl = safeDecode(pathname.split('/').pop() ?? '')
-  for (const candidate of [filenameFromDisposition(disposition), fromUrl]) {
-    if (!candidate) continue
-    if (/\.fb2\.zip$/i.test(candidate)) return '.fb2.zip'
-    if (/\.(epub|pdf|mobi|azw3?|fb2|fbz|cbz)$/i.test(candidate)) return extname(candidate).toLowerCase()
-  }
-  return TYPE_EXTENSIONS[type] ?? '.epub'
+  return namedExtension(disposition, pathname) ?? TYPE_EXTENSIONS[type] ?? '.epub'
 }
 
 export async function downloadBook(
@@ -157,18 +183,20 @@ export async function downloadBook(
   folder: string,
   suggestedName: string,
 ): Promise<string> {
-  const { response, controller, done } = await request(url, '*/*', 15 * 60_000)
+  const { response, controller, explain, done } = await request(url, '*/*', 15 * 60_000)
   let target = ''
   try {
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
-    if (Number(response.headers.get('content-length') ?? 0) > MAX_BOOK_BYTES)
-      throw new Error('The file is too large')
+    if (!response.ok) throw failure.status(response)
+    if (Number(response.headers.get('content-length') ?? 0) > MAX_BOOK_BYTES) throw failure.tooLarge()
+    // A sign-in or error page served in place of the file would otherwise be
+    // saved under a book's name and sit in the library unreadable.
+    const contentType = response.headers.get('content-type') ?? ''
+    const disposition = response.headers.get('content-disposition')
+    const { pathname } = new URL(url)
+    if (/^text\/html\b/i.test(contentType.trim()) && !namedExtension(disposition, pathname))
+      throw failure.notABook()
 
-    const extension = downloadExtension(
-      response.headers.get('content-type') ?? '',
-      response.headers.get('content-disposition'),
-      new URL(url).pathname,
-    )
+    const extension = downloadExtension(contentType, disposition, pathname)
     let name = sanitizeFilename(suggestedName) || 'book'
     if (!name.toLowerCase().endsWith(extension)) name += extension
     const stem = name.slice(0, name.length - extension.length)
@@ -186,7 +214,7 @@ export async function downloadBook(
           const { done: finished, value } = await reader.read()
           if (finished) break
           total += value.length
-          if (total > MAX_BOOK_BYTES) throw new Error('The file is too large')
+          if (total > MAX_BOOK_BYTES) throw failure.tooLarge()
           if (!file.write(value)) await new Promise<void>(resolve => file.once('drain', () => resolve()))
         }
       }
@@ -203,7 +231,7 @@ export async function downloadBook(
     return target
   } catch (error) {
     controller.abort()
-    throw error
+    throw explain(error)
   } finally {
     done()
   }

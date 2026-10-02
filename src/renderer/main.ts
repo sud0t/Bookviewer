@@ -1,4 +1,6 @@
 import { mount } from 'svelte'
+import '@fontsource-variable/figtree'
+import '@fontsource-variable/literata'
 import './app.css'
 import App from './App.svelte'
 

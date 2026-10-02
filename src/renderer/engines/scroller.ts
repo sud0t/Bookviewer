@@ -40,7 +40,10 @@ type Target = Range | Element | number | null | undefined
 const AHEAD = 2
 /** Views further than this many viewport heights away are unloaded. */
 const KEEP = 5
+/** Room left above what `goTo` scrolls to. */
 const TOP_MARGIN = 24
+/** The line reported as the position is the one this far below that margin. */
+const READING_LINE = 4
 
 const isRange = (value: unknown): value is Range =>
   !!value && typeof (value as Range).getClientRects === 'function' && 'startContainer' in (value as object)
@@ -61,6 +64,8 @@ export class Scroller extends HTMLElement {
     target: Element | Range | null
     position: number
     offset: number
+    /** Set after a navigation, until the reader scrolls: shows its target again. */
+    again?: () => void
   } | null = null
   /** Where #restoreAnchor last put the viewport (to recognise its own scroll event). */
   #restoredTo = -1
@@ -148,11 +153,11 @@ export class Scroller extends HTMLElement {
     return view.element.offsetTop
   }
 
-  /** The view under the top edge of the viewport. */
-  #current(): View | null {
+  /** The view under the top edge of the viewport, or this far below it. */
+  #current(below = 1): View | null {
     const { scrollTop } = this.#container
     for (const view of this.#views)
-      if (this.#top(view) + view.element.offsetHeight > scrollTop + 1) return view
+      if (this.#top(view) + view.element.offsetHeight > scrollTop + below) return view
     return this.#views.at(-1) ?? null
   }
 
@@ -225,6 +230,13 @@ export class Scroller extends HTMLElement {
   #restoreAnchor(): void {
     const anchor = this.#anchor
     if (!anchor || anchor.view.dead || !anchor.view.element.isConnected) return
+    // Straight after a navigation it is the target that has to stay put, and
+    // it can be looked up again whatever happened to the document meanwhile
+    // (formulas being rendered replace the very text the anchor is in).
+    if (anchor.again) {
+      anchor.again()
+      return
+    }
     const { target } = anchor
     const gone =
       target &&
@@ -288,6 +300,7 @@ export class Scroller extends HTMLElement {
     // Same-origin so that we can reach into the document, but no scripts.
     iframe.setAttribute('sandbox', 'allow-same-origin')
     iframe.setAttribute('scrolling', 'no')
+    iframe.setAttribute('title', 'Book text')
     iframe.setAttribute('part', 'filter')
     // Until the real height is known, a screenful: `vh` units in the
     // content then come out as the reader's height, as they should.
@@ -346,6 +359,13 @@ export class Scroller extends HTMLElement {
     head.append(view.userStyle, view.layoutStyle)
     view.userStyle.textContent = this.#styles
     view.layoutStyle.textContent = this.#layoutCSS()
+
+    // Measure the text once its typeface is in: laid out in the fallback
+    // first, everything below would move when the real one arrives. (Fonts
+    // only start loading when a layout asks for them.)
+    void doc.body?.offsetHeight
+    await Promise.race([doc.fonts?.ready, new Promise(resolve => setTimeout(resolve, 400))])
+    if (view.dead) return
 
     this.dispatchEvent(new CustomEvent('load', { detail: { doc, index } }))
     // Whoever is waiting for this view may have moved on; compensate here.
@@ -514,7 +534,8 @@ export class Scroller extends HTMLElement {
     const { scrollTop, clientHeight } = this.#container
     const pad = this.#pad
     const width = doc.documentElement.clientWidth
-    const top = Math.max(0, scrollTop - this.#top(view))
+    const edge = scrollTop - this.#top(view)
+    const top = Math.max(0, edge)
     const bottom = Math.min(view.height - 1, top + clientHeight)
     const caret = (x: number, y: number): Range | null => {
       try {
@@ -523,43 +544,107 @@ export class Scroller extends HTMLElement {
         return null
       }
     }
-    const start = caret(pad + 2, top + 4) ?? caret(width / 2, top + 4)
     const end = caret(width - pad - 2, bottom - 4) ?? caret(width / 2, bottom - 4)
-    const range = doc.createRange()
-    try {
-      if (start) range.setStart(start.startContainer, start.startOffset)
-      else range.setStart(doc.body, 0)
-      if (end && range.comparePoint(end.startContainer, end.startOffset) >= 0)
-        range.setEnd(end.startContainer, end.startOffset)
-      else range.collapse(true)
-    } catch {
-      range.selectNodeContents(doc.body)
-      range.collapse(true)
+    /** What is in view from a caret on. */
+    const from = (start: Range | null): Range => {
+      const range = doc.createRange()
+      try {
+        if (start) range.setStart(start.startContainer, start.startOffset)
+        else range.setStart(doc.body, 0)
+        if (end && range.comparePoint(end.startContainer, end.startOffset) >= 0)
+          range.setEnd(end.startContainer, end.startOffset)
+        else range.collapse(true)
+      } catch {
+        range.selectNodeContents(doc.body)
+        range.collapse(true)
+      }
+      return range
     }
+    // The range starts with the line that `goTo` would put below its margin:
+    // coming back to it then leaves the view where it is, rather than a
+    // line further up each time. That is the line the reading line runs
+    // through. Where it falls between two, it is the one above if that is
+    // in view as a whole (nothing in view is then pushed out of it), and
+    // otherwise the one below.
+    const line = Math.min(view.height - 1, Math.max(0, edge + TOP_MARGIN) + READING_LINE)
+    let range: Range | null = null
+    for (let y = line; y > top && !range; y -= 8) {
+      const candidate = from(caret(pad + 2, y))
+      const box = this.#boxOf(candidate)
+      if (box && box.top <= line && (box.bottom > line || box.top >= top)) range = candidate
+    }
+    for (let y = line + 8; y <= line + 48 && !range; y += 8) {
+      const candidate = from(caret(pad + 2, y))
+      const box = this.#boxOf(candidate)
+      if (box && box.top > line) range = candidate
+    }
+    range ??= from(caret(pad + 2, line) ?? caret(width / 2, line))
+    // Where that line runs through a picture or a formula, this is the top
+    // of that, and coming back shows it from there. With the top far above
+    // the view that is a long way from where the reader was: text a little
+    // further down may well be closer.
+    const off = (shown: Range, y: number) => Math.abs(this.#offsetOf(view, shown) - y)
+    if (off(range, line) > clientHeight / 3)
+      for (let y = line + 24; y < Math.min(view.height, top + clientHeight / 2); y += 24) {
+        const below = caret(pad + 2, y)
+        if (below?.startContainer.nodeType !== 3) continue
+        const candidate = from(below)
+        if (off(candidate, y) > 32) continue
+        if (y - line < off(range, line)) range = candidate
+        break
+      }
     return range
   }
 
+  /** Whether the end of the book is in view. */
+  #atEnd(): boolean {
+    const last = this.#views.at(-1)
+    if (!last?.doc || this.#adjacent(last.index, 1) != null) return false
+    const { scrollTop, clientHeight } = this.#container
+    return this.#top(last) + last.element.offsetHeight <= scrollTop + clientHeight + 1
+  }
+
   #relocate(reason: string): void {
+    clearTimeout(this.#relocateTimer)
+    this.#relocateTimer = undefined
     if (this.#destroyed) return
-    const view = this.#current()
+    // (the view the reading line is in: the last few pixels of the section
+    // before it may still show above)
+    const view = this.#current(TOP_MARGIN + READING_LINE)
     if (!view?.doc) return
     const { scrollTop } = this.#container
     const fraction = Math.min(1, Math.max(0, (scrollTop - this.#top(view)) / Math.max(1, view.height)))
     this.dispatchEvent(
       new CustomEvent('relocate', {
-        detail: { reason, range: this.#visibleRange(view), index: view.index, fraction },
+        detail: {
+          reason,
+          range: this.#visibleRange(view),
+          index: view.index,
+          fraction,
+          atEnd: this.#atEnd(),
+        },
       }),
     )
   }
 
+  /** Reports the position now if scrolling has moved it and the report is still to come. */
+  flush(): void {
+    if (this.#relocateTimer !== undefined) this.#relocate('scroll')
+  }
+
   /* ---------- the renderer interface ---------- */
+
+  /** The box of the first line (or picture) of a range or an element. */
+  #boxOf(subject: Range | Element): DOMRect | undefined {
+    const rects = subject.getClientRects()
+    return Array.from(rects).find(r => r.width > 0 || r.height > 0) ?? rects[0]
+  }
 
   #offsetOf(view: View, target: Target): number {
     if (typeof target === 'number') return target * view.height
     const subject = isRange(target) || isElement(target) ? target : null
     if (!subject) return 0
-    const rects = subject.getClientRects()
-    const rect = Array.from(rects).find(r => r.width > 0 || r.height > 0) ?? rects[0]
+    const rect = this.#boxOf(subject)
     if (rect) return rect.top
     // A collapsed range may have no rects; fall back on its container.
     const node = isRange(subject) ? subject.startContainer : subject
@@ -581,8 +666,16 @@ export class Scroller extends HTMLElement {
     }
     await view.ready
     if (generation !== this.#generation || view.dead) return
+    this.#show(view, resolved.anchor)
+    this.#relocate('navigation')
+    await this.#fill()
+    if (generation !== this.#generation) return
+    this.#restoreAnchor()
+  }
+
+  /** Scrolls to what an anchor points at in a (loaded) view. */
+  #show(view: View, anchor: Anchor | number | undefined): void {
     this.#expand(view)
-    const anchor = resolved.anchor
     let where: Target = 0
     if (typeof anchor === 'function') {
       try {
@@ -594,11 +687,10 @@ export class Scroller extends HTMLElement {
     const fraction = typeof where === 'number'
     const offset = this.#offsetOf(view, where)
     this.#container.scrollTop = Math.max(0, this.#top(view) + offset - (fraction ? 0 : TOP_MARGIN))
+    // (our own scroll: #onScroll must not take it for the reader moving on)
+    this.#restoredTo = this.#container.scrollTop
     this.#captureAnchor()
-    this.#relocate('navigation')
-    await this.#fill()
-    if (generation !== this.#generation) return
-    this.#restoreAnchor()
+    if (this.#anchor && typeof anchor === 'function') this.#anchor.again = () => this.#show(view, anchor)
   }
 
   /** Brings a range or element into the comfortable part of the viewport. */

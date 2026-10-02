@@ -22,9 +22,42 @@ export function cfiFilter(node: Node): number {
   return ACCEPT
 }
 
-export const fromRange = (range: Range): string => CFI.fromRange(range, cfiFilter)
+/**
+ * A point inside something we inserted (a rendered formula) has no address
+ * in the original document. The end of the original text just before it -
+ * for a formula, its source - stands in for it.
+ */
+function original(node: Node, offset: number): [Node, number] {
+  const element = node.nodeType === 1 ? (node as Element) : node.parentElement
+  const inserted = element?.closest(`[${IGNORE}]`)
+  const body = inserted?.ownerDocument.body
+  if (!inserted || !body) return [node, offset]
+  const walker = body.ownerDocument.createTreeWalker(body, 0x4, {
+    acceptNode: text => (text.parentElement?.closest(`[${IGNORE}]`) ? REJECT : ACCEPT),
+  })
+  walker.currentNode = inserted
+  const before = walker.previousNode() as Text | null
+  if (before) return [before, before.length]
+  walker.currentNode = inserted
+  const after = walker.nextNode()
+  return after ? [after, 0] : [node, offset]
+}
 
-export const toRange = (doc: Document, parts: CFI.ParsedCFI): Range =>
-  CFI.toRange(doc, parts, cfiFilter)
+export function fromRange(range: Range): string {
+  const clean = range.cloneRange()
+  clean.setStart(...original(range.startContainer, range.startOffset))
+  clean.setEnd(...original(range.endContainer, range.endOffset))
+  return CFI.fromRange(clean, cfiFilter)
+}
+
+/** A CFI whose end can no longer be found in the document still says where it starts. */
+export function toRange(doc: Document, parts: CFI.ParsedCFI): Range {
+  try {
+    return CFI.toRange(doc, parts, cfiFilter)
+  } catch (error) {
+    if (!('parent' in parts)) throw error
+    return CFI.toRange(doc, CFI.collapse(parts) as CFI.ParsedCFI, cfiFilter)
+  }
+}
 
 export { CFI }

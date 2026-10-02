@@ -10,7 +10,7 @@ vertical scroll with highlights, notes, search, lookup and read-aloud.
 
 | | |
 |---|---|
-| ![EPUB with rendered math and a highlight](docs/screenshots/reader-math-highlight.png) | ![A saved Sphinx site read as a book](docs/screenshots/web-book.png) |
+| ![An EPUB with its contents panel and a bookmarked page](docs/screenshots/reader.png) | ![A saved Sphinx site read as a book](docs/screenshots/web-book.png) |
 | ![Paginated layout, dark theme](docs/screenshots/paginated-dark.png) | ![PDF with a highlight](docs/screenshots/pdf.png) |
 
 ## Features
@@ -18,7 +18,9 @@ vertical scroll with highlights, notes, search, lookup and read-aloud.
 - **Library** – add folders; they are scanned and watched for changes. Covers
   come from the book (EPUB cover, first PDF page, a site's `og:image`); books
   without one get a generated title card. Sort, filter by format or folder,
-  search by title/author, grid or list.
+  search by title/author, grid or list. Books in progress sit on a "Continue
+  reading" shelf at the top; each book's menu has its details and marks it
+  finished or unread.
 - **Continuous scroll** – chapters (and the pages of an HTML book) are stitched
   into a single column; nothing to click at chapter ends. A paginated,
   two-page layout is one toggle away.
@@ -33,7 +35,13 @@ vertical scroll with highlights, notes, search, lookup and read-aloud.
   PDF alike. They are anchored by EPUB CFI / PDF rectangles *and* by the quoted
   text, so they survive a book being re-saved or re-converted. Export to
   Markdown or JSON.
-- **Bookmarks**, reading progress, and a back button after following links.
+- **Bookmarks** – a red ribbon marks a bookmarked page, a notice says which
+  page was bookmarked and offers Undo, and bookmarks show as marks along the
+  progress bar.
+- **Finding your way** – every book reopens where you stopped. The bottom bar
+  has previous/next, back and forward after a jump, a progress bar with chapter
+  marks that previews where a jump lands, "go to page", and the reading time
+  left in the chapter.
 - **Search** inside a book, with results listed by chapter.
 - **Lookup** – dictionary (Free Dictionary API, Wiktionary) and Wikipedia
   popovers for the selection; a translate action opens Google Translate.
@@ -67,6 +75,10 @@ npm run test:e2e   # builds, then drives the real app with Playwright
 npm run typecheck
 ```
 
+`scripts/scenarios/ui-tour.mjs` screenshots every screen in two themes (and
+checks accessibility with `AXE=1`); `scripts/scenarios/readme-shots.mjs` retakes
+the pictures above. Both run through `node scripts/drive.mjs <scenario>`.
+
 The end-to-end test starts Electron on Chromium's headless display backend, so
 no window appears; `HEADED=1 npm run test:e2e` shows it.
 
@@ -88,14 +100,18 @@ against the system `electron` package instead of bundling one
 | `←` `PageUp` `Shift+Space` | previous page / screen |
 | `↓` `↑` or `j` `k` | scroll a little |
 | `Home` `End` | start / end of the book |
-| `Ctrl+F` or `/` | search in the book |
-| `Ctrl+D` | add a bookmark |
+| `Ctrl+G` | go to a page |
+| `Alt+←` `Alt+→` | back / forward after a jump; `Alt+←` with nothing to go back to returns to the library |
+| `Ctrl+F` or `/` | search (in the book, or in the library) |
+| `Enter` `Shift+Enter` | next / previous search result |
+| `Ctrl+D` | bookmark this page, or remove its bookmark |
+| `Ctrl+Z` | undo, while a notice offers it |
 | `T` | contents panel |
-| `Alt+←` | back to where you were before a jump |
-| `Ctrl +` `Ctrl -` | text size |
+| `Ctrl +` `Ctrl -` `Ctrl 0` | text size; zoom in a PDF |
 | `Ctrl+wheel` | zoom (PDF) |
 | `F11` | full screen |
-| `Esc` | close popover / leave full screen |
+| `Esc` | close whatever is open / leave full screen |
+| `?` | list of shortcuts |
 
 ## How it is put together
 

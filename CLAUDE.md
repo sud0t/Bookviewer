@@ -17,17 +17,26 @@ Built with Electron + Vite (electron-vite), TypeScript, Svelte 5, SQLite
 - TeX math left in the text is rendered (MathJax); code is syntax-highlighted
 - Highlights and notes (5 colours, 4 styles) in EPUB, HTML and PDF; they
   re-anchor by quoted text if the book changes; export to Markdown/JSON
-- Bookmarks, reading progress, back button after following a link
+- Bookmarks: red ribbon on a bookmarked page, toast naming the page with Undo,
+  marks on the progress bar
+- Reading progress restored on reopen; bottom bar with prev/next, back/forward
+  history, chapter marks, jump preview, go to page, time left in chapter
+- Library: "Continue reading" shelf, per-book menu (details, mark finished/unread)
 - Search within a book
 - Dictionary and Wikipedia lookup for the selection; translate link
 - Read aloud, sentence by sentence (system voices, espeak-ng, or Piper)
-- Themes (light, sepia, gray, dark, black), fonts, size, spacing, width
+- Themes (light, sepia, gray, dark, black), fonts, size, spacing, width; the UI
+  colours are tokens in app.css (orange accent, red only for bookmarks)
 - OPDS catalogs: browse, search, download into a library folder
 - Packaging: AppImage, .deb, .pacman, and an Arch PKGBUILD
 
 Not done yet: MOBI/AZW3 untested with real files, offline (StarDict)
 dictionaries, a UI for lookup/translation language, opening a file from the
-command line, PDF highlights spanning pages.
+command line, PDF highlights spanning pages. From the 2026-10-02 usability
+reviews, still open: Tab gets caught in the book text (no F6-style way to the
+toolbar), the current search match is not drawn differently in the page,
+right-click menu in book text, removing a single book from the library,
+arrow-key movement in the library grid, drag-and-drop of a folder.
 
 ## Commands
 
@@ -39,7 +48,11 @@ npm test             # unit tests (vitest)
 npm run test:e2e     # builds, then drives the real app headlessly (Playwright)
 npm run dist         # packages into dist/
 node scripts/drive.mjs scripts/scenarios/open-book.mjs   # ad-hoc headless run + screenshots
+PROFILE=.scratch/tour AXE=1 node scripts/drive.mjs scripts/scenarios/ui-tour.mjs   # every screen, both themes, + accessibility check
 ```
+
+After a UI change, look at the tour's screenshots (the `ui-check` skill in
+`.claude/skills/` describes the loop; `frontend-design` there is the design guidance).
 
 After cloning: `git submodule update --init` (foliate-js lives in `vendor/`).
 
@@ -58,9 +71,10 @@ src/main/                  Electron main process
 src/preload/index.ts       the bridge the UI uses to call the main process
 src/renderer/              the UI
   App.svelte  app.css        root component, global styles and theme colours
-  lib/                       global state (app.svelte.ts), IPC wrapper, icons
-  Library/                   library grid, book cards, metadata/cover extraction (meta.ts),
-                             OPDS browser (Catalogs.svelte, opds.ts)
+  lib/                       global state and toasts (app.svelte.ts), IPC wrapper, icons,
+                             Dialog, keyboard-shortcut sheet, theme picker
+  Library/                   library grid, book cards and covers, metadata/cover extraction
+                             (meta.ts), OPDS browser (Catalogs.svelte, opds.ts)
   Reader/                    Reader.svelte (the reader screen), side panel, appearance panel,
                              popovers, lookup view, read-aloud controller (tts.svelte.ts)
   engines/                   what actually renders a book
@@ -70,14 +84,17 @@ src/renderer/              the UI
     webbook.ts webpage.ts      turning a saved site into a book; cleaning up its pages
     pdf.ts pdf-text.ts rects.ts  the PDF engine (pdf.js) and its helpers
     math.ts cfi.ts             math rendering that keeps highlights in place
-    appearance.ts              themes and typography applied to book content
+    appearance.ts fonts.ts     themes and typography applied to book content; the bundled
+                               reading typeface (Literata)
     formats.ts remote-file.ts speech.ts pdfjs.ts
   annotations/               text anchoring (anchor.ts), annotation store, export
   types/foliate.d.ts         typings for foliate-js
 vendor/foliate-js          e-book parsing/rendering library (git submodule, don't edit)
 tests/unit/                vitest tests
 tests/e2e/                 Playwright test of the real app; fixtures.ts builds test books
-scripts/drive.mjs          headless driver for trying things by hand
+scripts/drive.mjs          headless driver for trying things by hand (scenarios/ui-tour.mjs
+                           screenshots every screen)
+.claude/skills/            frontend-design, theme-factory, ui-check (project skills)
 packaging/                 Arch PKGBUILD and .desktop file
 build/  resources/         app icons
 electron.vite.config.ts  electron-builder.yml  playwright.config.ts  vitest.config.ts
@@ -86,4 +103,10 @@ docs/screenshots/          screenshots used by the README
 ```
 
 User data is in `~/.config/BookViewer` (`library.db` and `covers/`). Tests and
-`scripts/drive.mjs` use a separate throwaway profile via `BOOKVIEWER_USER_DATA`.
+`scripts/drive.mjs` use a separate throwaway profile via `BOOKVIEWER_USER_DATA`,
+and stub `shell.openExternal` so a clicked link never opens the real browser.
+
+Things that are easy to break (each has an e2e test in "coming back to a book"):
+a book must reopen at exactly the text it was left at, however often; the
+scroller reports the line `goTo` would restore (see `READING_LINE` in
+scroller.ts), and chapters are measured only after their fonts have loaded.

@@ -25,7 +25,7 @@ import { _electron as electron } from '@playwright/test'
 
 const project = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const scratch = resolve(project, '.scratch')
-const profile = process.env.PROFILE ?? resolve(scratch, 'profile')
+const profile = process.env.PROFILE ? resolve(process.env.PROFILE) : resolve(scratch, 'profile')
 mkdirSync(resolve(scratch, 'shots'), { recursive: true })
 
 if (!process.argv[2]) {
@@ -40,6 +40,13 @@ const app = await electron.launch({
   ],
   cwd: project,
   env: { ...process.env, BOOKVIEWER_USER_DATA: profile, BOOKVIEWER_DEVTOOLS: '1' },
+})
+// A link clicked in a book must not open the real browser or file manager on
+// the desktop this runs on; say where it would have gone instead.
+await app.evaluate(({ shell }) => {
+  shell.openExternal = async url => console.log('would open in the browser:', url)
+  shell.showItemInFolder = path => console.log('would show in the file manager:', path)
+  shell.openPath = async path => (console.log('would open:', path), '')
 })
 const logs = []
 const stderr = []

@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { coverUrl, type Book } from '@shared/types'
+  import type { Book } from '@shared/types'
+  import Icon from '../lib/Icon.svelte'
+  import Cover from './Cover.svelte'
   import { FORMAT_LABELS } from './formats'
 
   let {
@@ -14,123 +16,122 @@
     onmenu: (book: Book, event: MouseEvent) => void
   } = $props()
 
-  const cover = $derived(coverUrl(book))
-  // A stable colour per title for books that have no cover image.
-  const hue = $derived(
-    [...book.title].reduce((hash, char) => (hash * 31 + char.charCodeAt(0)) % 360, 7),
-  )
   const percent = $derived(Math.round(book.progress * 100))
+  const finished = $derived(book.progress >= 0.99)
+  const state = $derived(finished ? 'Finished' : book.progress > 0 ? `${Math.max(1, percent)}% read` : '')
+  /** Why the book cannot be read right now, if it cannot. */
+  const trouble = $derived(
+    book.missing ? 'File not found' : book.metaState === 'failed' ? 'Can’t be read' : '',
+  )
 </script>
 
-<button
+<div
   class="card"
   class:list
+  class:trouble={!!trouble}
   title={book.title}
-  onclick={() => onopen(book)}
+  data-id={book.id}
   oncontextmenu={event => {
     event.preventDefault()
     onmenu(book, event)
   }}
+  role="group"
+  aria-label={book.title}
 >
-  <div class="cover">
-    {#if cover}
-      <img src={cover} alt="" loading="lazy" draggable="false" />
-    {:else}
-      <div class="placeholder" style:--hue={hue}>
-        <span class="placeholder-title">{book.title}</span>
-        {#if book.author}<span class="placeholder-author">{book.author}</span>{/if}
-      </div>
-    {/if}
-    <span class="badge">{FORMAT_LABELS[book.format]}</span>
-    {#if book.progress > 0}
-      <div class="progress" aria-hidden="true"><div style:width="{percent}%"></div></div>
-    {/if}
-  </div>
-  <div class="text">
-    <div class="title">{book.title}</div>
-    <div class="author muted">{book.author || ' '}</div>
-    {#if list}
-      <div class="meta muted">
-        {FORMAT_LABELS[book.format]}{book.progress > 0 ? ` · ${percent}% read` : ''}
-      </div>
-    {/if}
-  </div>
-</button>
+  <button class="open" onclick={() => onopen(book)}>
+    <div class="cover">
+      <Cover {book} bare={list} />
+      {#if book.progress > 0 && !list}
+        <div class="progress" aria-hidden="true"><div style:width="{percent}%"></div></div>
+      {/if}
+    </div>
+    <div class="text">
+      <div class="title">{book.title}</div>
+      <div class="author muted">{book.author || ' '}</div>
+      {#if list}
+        <div class="muted">{FORMAT_LABELS[book.format]}</div>
+        <div class="meta muted">
+          {#if trouble}
+            <span class="warn">{trouble}</span>
+          {:else if book.progress > 0}
+            <span class="bar" aria-hidden="true"><span style:width="{percent}%"></span></span>
+            <span class:finished>{state}</span>
+          {/if}
+        </div>
+      {:else}
+        <div class="meta muted">
+          <span class="format">{FORMAT_LABELS[book.format]}</span>
+          {#if trouble}
+            <span class="warn">{trouble}</span>
+          {:else if state}
+            <span class:finished>{state}</span>
+          {/if}
+        </div>
+      {/if}
+    </div>
+  </button>
+  <button
+    class="icon-btn more"
+    title="More actions"
+    aria-label="More actions for {book.title}"
+    aria-haspopup="menu"
+    onclick={event => onmenu(book, event)}
+  >
+    <Icon name="more" size={16} />
+  </button>
+</div>
 
 <style>
   .card {
+    position: relative;
+    min-width: 0;
+    border-radius: var(--radius);
+  }
+  .card:hover,
+  .card:focus-within {
+    background: var(--hover);
+  }
+  .open {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    text-align: left;
-    border-radius: var(--radius);
+    gap: 9px;
+    width: 100%;
     padding: 8px;
-    min-width: 0;
+    border-radius: var(--radius);
+    text-align: left;
   }
-  .card:hover {
-    background: var(--hover);
+  .more {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    color: #fff;
+    background: rgb(0 0 0 / 0.55);
+    backdrop-filter: blur(4px);
+    opacity: 0;
+  }
+  .card:hover .more,
+  .more:focus-visible {
+    opacity: 1;
+  }
+  .more:hover:not(:disabled) {
+    background: rgb(0 0 0 / 0.75);
+  }
+  .card.trouble .cover {
+    opacity: 0.55;
+  }
+  .warn {
+    color: var(--danger);
   }
   .cover {
     position: relative;
     aspect-ratio: 2 / 3;
-    border-radius: 4px;
+    border-radius: 5px;
     overflow: hidden;
     background: var(--surface-2);
     box-shadow: var(--shadow);
-  }
-  img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-  }
-  .placeholder {
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 14% 10% 12%;
-    color: #fff;
-    background: linear-gradient(
-      160deg,
-      hsl(var(--hue) 38% 42%),
-      hsl(calc(var(--hue) + 30) 42% 26%)
-    );
-  }
-  .placeholder-title {
-    font-family: Georgia, 'Times New Roman', serif;
-    font-size: 15px;
-    line-height: 1.25;
-    font-weight: 600;
-    display: -webkit-box;
-    -webkit-line-clamp: 6;
-    line-clamp: 6;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    overflow-wrap: anywhere;
-  }
-  .placeholder-author {
-    font-size: 11px;
-    opacity: 0.85;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-  .badge {
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    padding: 1px 6px;
-    border-radius: 3px;
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    color: #fff;
-    background: rgb(0 0 0 / 0.55);
-    backdrop-filter: blur(4px);
   }
   .progress {
     position: absolute;
@@ -138,17 +139,20 @@
     right: 0;
     bottom: 0;
     height: 4px;
-    background: rgb(0 0 0 / 0.35);
+    background: rgb(0 0 0 / 0.4);
   }
   .progress div {
     height: 100%;
-    background: var(--accent);
+    /* even one percent should be visible */
+    min-width: 6px;
+    background: var(--accent-strong);
   }
   .text {
     min-width: 0;
   }
   .title {
     font-weight: 600;
+    line-height: 1.3;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     line-clamp: 2;
@@ -157,42 +161,88 @@
     overflow-wrap: anywhere;
   }
   .author {
-    font-size: 12px;
+    margin-top: 2px;
+    font-size: 12.5px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+    font-size: 11.5px;
+    white-space: nowrap;
+  }
+  .format {
+    padding: 0 5px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    font-size: 10.5px;
+    font-weight: 600;
+    line-height: 1.5;
+  }
+  .finished {
+    color: var(--accent);
+  }
 
-  .card.list {
+  .card.list .open {
     flex-direction: row;
     align-items: center;
-    gap: 14px;
-    padding: 6px 10px;
+    gap: 16px;
+    padding: 6px 44px 6px 10px;
+  }
+  .card.list .more {
+    top: 50%;
+    right: 8px;
+    margin-top: -14px;
+    color: var(--fg-muted);
+    background: none;
+    backdrop-filter: none;
+    opacity: 1;
+  }
+  .card.list .more:hover {
+    background: var(--hover);
   }
   .card.list .cover {
     width: 44px;
     flex: none;
   }
-  .card.list .badge,
-  .card.list .placeholder span {
-    display: none;
-  }
   .card.list .text {
     flex: 1;
     display: grid;
-    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr) 140px;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr) 56px 130px;
     gap: 16px;
     align-items: center;
+    font-size: 12.5px;
+  }
+  .card.list .title {
+    font-size: 14px;
   }
   .card.list .title {
     -webkit-line-clamp: 1;
     line-clamp: 1;
   }
   .card.list .author {
+    margin: 0;
     font-size: 13px;
   }
-  .meta {
+  .card.list .meta {
+    margin: 0;
     font-size: 12px;
-    text-align: right;
+  }
+  .bar {
+    flex: none;
+    width: 56px;
+    height: 4px;
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--fg-muted) 22%, transparent);
+    overflow: hidden;
+  }
+  .bar span {
+    display: block;
+    height: 100%;
+    background: var(--accent-strong);
   }
 </style>

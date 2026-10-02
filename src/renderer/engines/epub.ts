@@ -8,7 +8,7 @@
  */
 import type { Annotation, Selector, Settings } from '@shared/types'
 import { Overlayer } from 'foliate-js/overlayer.js'
-import { SectionProgress, TOCProgress } from 'foliate-js/progress.js'
+import { SectionProgress, TOCProgress, type SectionProgressInfo } from 'foliate-js/progress.js'
 import { textWalker } from 'foliate-js/text-walker.js'
 import type { Anchor, FoliateBook, FoliateTocItem, Resolved } from 'foliate-js/types'
 import { anchorQuote, describeRange, rangeMatches } from '../annotations/anchor'
@@ -30,6 +30,7 @@ import {
   type Appearance,
   type Engine,
   type EngineEvents,
+  type Relocation,
   type SearchOptions,
   type SearchUpdate,
   type SpeechSegment,
@@ -46,6 +47,7 @@ interface Renderer extends HTMLElement {
   getContents(): { doc: Document; index?: number; overlayer?: Overlayer }[]
   setStyles?(styles: string): void
   scrollToAnchor?(anchor: Range | Element, select?: boolean): Promise<void>
+  flush?(): void
   destroy(): void
 }
 
@@ -55,6 +57,8 @@ interface RelocateDetail {
   index: number
   fraction?: number
   size?: number
+  /** The end of the book is in view (our scroller; foliate's renderers count the page instead). */
+  atEnd?: boolean
 }
 
 type RangeAnchor = (doc: Document) => Range | null
@@ -77,21 +81,35 @@ export function cfiLocator(book: FoliateBook): Locator {
   const base = (index: number) => book.sections[index].cfi ?? CFI.fake.fromIndex(index)
   const full = (index: number, range: Range | null) =>
     range ? CFI.joinIndir(base(index), fromRange(range)) : base(index)
-  const resolve = (cfi: string): { index: number; anchor: (doc: Document) => Range } | null => {
+  const resolve = (cfi: string): { index: number; anchor: (doc: Document) => Range | null } | null => {
     try {
       const parts = CFI.parse(cfi)
       // The first step addresses the spine item; the rest is the path within it.
       const spine = ('parent' in parts ? parts.parent : parts).shift()
       const index = book.resolveCFI ? book.resolveCFI(cfi).index : CFI.fake.toIndex(spine)
       if (!(index >= 0)) return null
-      return { index, anchor: doc => toRange(doc, parts) }
+      return {
+        index,
+        anchor: doc => {
+          try {
+            return toRange(doc, parts)
+          } catch {
+            // the document no longer has what the CFI points at
+            return null
+          }
+        },
+      }
     } catch {
       return null
     }
   }
   return {
     toLocation: full,
-    fromLocation: location => (CFI.isCFI.test(location) ? resolve(location) : null),
+    fromLocation(location) {
+      const resolved = CFI.isCFI.test(location) ? resolve(location) : null
+      // A place that cannot be found any more becomes the start of its section.
+      return resolved && { index: resolved.index, anchor: doc => resolved.anchor(doc) ?? 0 }
+    },
     toSelector(index, range) {
       const described = quoteOf(range)
       return described ? { type: 'cfi', cfi: full(index, range), quote: described.quote } : null
@@ -103,12 +121,7 @@ export function cfiLocator(book: FoliateBook): Locator {
       return {
         index: resolved.index,
         anchor: doc => {
-          let range: Range | null = null
-          try {
-            range = resolved.anchor(doc)
-          } catch {
-            range = null
-          }
+          const range = resolved.anchor(doc)
           if (range && (!selector.quote.exact || rangeMatches(range, selector.quote))) return range
           return anchorQuote(doc.body ?? doc.documentElement, selector.quote) ?? range
         },
@@ -142,6 +155,133 @@ function toViewport(doc: Document, rect: DOMRect): ViewportRect {
   }
 }
 
+/**
+ * Some books list every chapter and section at one level, although their
+ * numbering ("3.", "3.1.", "3.2.") says how they nest. Rebuilds the nesting
+ * of a list that has none of its own; any other list is returned as it is.
+ */
+export function nestNumbered(toc: FoliateTocItem[]): FoliateTocItem[] {
+  if (toc.some(item => item.subitems?.length)) return toc
+  const numberOf = (label: string): number[] | null => {
+    const match = /^\s*(\d+(?:\.\d+)*)\.?(?=\s|$)/.exec(label)
+    return match ? match[1].split('.').map(Number) : null
+  }
+  const nested: FoliateTocItem[] = []
+  // the numbered entries that later ones can still go under, outermost first
+  let open: { number: number[]; item: FoliateTocItem }[] = []
+  let moved = false
+  for (const original of toc) {
+    const item = { ...original }
+    const number = numberOf(item.label ?? '')
+    if (!number) {
+      // "Foreword", "Appendix": ends whatever chapter was open
+      open = []
+      nested.push(item)
+      continue
+    }
+    const contains = (parent: number[]) =>
+      parent.length < number.length && parent.every((part, i) => part === number[i])
+    while (open.length && !contains(open[open.length - 1].number)) open.pop()
+    const parent = open[open.length - 1]?.item
+    if (parent) {
+      parent.subitems = [...(parent.subitems ?? []), item]
+      moved = true
+    } else nested.push(item)
+    open.push({ number, item })
+  }
+  return moved ? nested : toc
+}
+
+/** A contents entry with the place it points to: a section, and maybe an element in it. */
+export interface TocPlace {
+  item: FoliateTocItem
+  section: number
+  fragment: unknown
+}
+
+/**
+ * The contents entries that lead somewhere, in reading order, with the
+ * section each starts in. (foliate's TOCProgress works the same out, but
+ * keeps it to itself.)
+ */
+export async function tocPlaces(
+  toc: FoliateTocItem[],
+  ids: unknown[],
+  splitHref: (href: string) => unknown[] | Promise<unknown[]>,
+): Promise<TocPlace[]> {
+  const sectionOf = new Map(ids.map((id, index) => [id, index]))
+  const places: TocPlace[] = []
+  const walk = async (items: FoliateTocItem[]): Promise<void> => {
+    for (const item of items) {
+      if (item.href) {
+        const [id, fragment] = (await splitHref(item.href)) ?? []
+        const section = sectionOf.get(id)
+        if (section != null) places.push({ item, section, fragment })
+      }
+      if (item.subitems) await walk(item.subitems)
+    }
+  }
+  await walk(toc)
+  return places
+}
+
+/**
+ * The contents entry a section belongs to, going by the section alone: the
+ * first entry that starts in it (its own title, usually), or else the last
+ * one before it. Which of several entries inside one section a position
+ * falls under takes the section's text to tell.
+ */
+export function tocEntryOf(places: TocPlace[], section: number): FoliateTocItem | null {
+  const own = places.find(place => place.section === section)
+  return (own ?? places.findLast(place => place.section < section))?.item ?? null
+}
+
+const HEADINGS = 'h1, h2, h3, h4, h5, h6'
+const HEADING_LINKS = `:is(${HEADINGS}) a[href], a[href]:has(> :is(${HEADINGS}))`
+const SELF_LINK = 'data-bv-self-link'
+
+/**
+ * Whether a link only points at the heading it belongs to. mdBook wraps the
+ * text of every heading in such a link (older versions wrap the link around
+ * the heading), and so do the EPUBs made from its books.
+ */
+export function isSelfLink(link: Element): boolean {
+  const inside = link.firstElementChild
+  const heading = link.closest(HEADINGS) ?? (inside?.matches(HEADINGS) && link.children.length === 1 ? inside : null)
+  const href = link.getAttribute('href') ?? ''
+  const hash = href.indexOf('#')
+  if (!heading || hash < 0) return false
+  let id = href.slice(hash + 1)
+  try {
+    id = decodeURIComponent(id)
+  } catch {
+    // keep as written
+  }
+  if (!id) return false
+  const doc = link.ownerDocument
+  const target = doc.getElementById(id) ?? doc.querySelector(`[name="${CSS.escape(id)}"]`)
+  if (!target) return false
+  // the link or heading itself, something in the heading, or the section the
+  // heading is the title of
+  return (
+    target === link || target === heading || heading.contains(target) || target.querySelector(HEADINGS) === heading
+  )
+}
+
+/**
+ * Repairs that go on top of the typography in every book. A heading that
+ * links to itself should look like a heading, not a link; and code is never
+ * centred or justified, whatever the figure or list around it says.
+ */
+const REPAIRS_CSS = `
+  a[${SELF_LINK}] {
+    color: inherit !important;
+    text-decoration: none !important;
+    cursor: inherit !important;
+  }
+  pre { text-align: start; }
+`
+
 export interface ReflowOptions {
   locator?: Locator
   /** A comic: pages are images, which the scroller can stack like a webtoon. */
@@ -152,6 +292,7 @@ export interface ReflowOptions {
 
 export class ReflowEngine implements Engine {
   toc: TocItem[] = []
+  chapterStarts: number[] = []
   readonly reflowable: boolean
   readonly language: string
 
@@ -161,6 +302,7 @@ export class ReflowEngine implements Engine {
   private appearance!: Appearance
   private sectionProgress: SectionProgress
   private tocProgress: TOCProgress | null = null
+  private tocPlaces: TocPlace[] = []
   private tocTargets = new Map<number, string>()
   private annotations = new Map<number, Annotation>()
   private resolved = new Map<number, { index: number; anchor: RangeAnchor } | null>()
@@ -170,6 +312,10 @@ export class ReflowEngine implements Engine {
   private last: { index: number; range: Range | null; location: string; fraction: number } | null =
     null
   private wheelLock = 0
+  /** The section documents that have loaded (see `onRelocate`). */
+  private loaded = new WeakSet<Document>()
+  /** The moves asked of the renderer that are not over yet (see `settled`). */
+  private moving: Promise<unknown> = Promise.resolve()
   private destroyed = false
 
   constructor(
@@ -193,14 +339,13 @@ export class ReflowEngine implements Engine {
     for (const annotation of init.annotations) this.annotations.set(annotation.id, annotation)
 
     const { book } = this
+    const toc = nestNumbered(book.toc ?? [])
     if (book.splitTOCHref && book.getTOCFragment) {
+      const ids = book.sections.map(section => section.id)
+      const splitHref = book.splitTOCHref.bind(book)
       this.tocProgress = new TOCProgress()
-      await this.tocProgress.init({
-        toc: book.toc ?? [],
-        ids: book.sections.map(section => section.id),
-        splitHref: book.splitTOCHref.bind(book),
-        getFragment: book.getTOCFragment.bind(book),
-      })
+      await this.tocProgress.init({ toc, ids, splitHref, getFragment: book.getTOCFragment.bind(book) })
+      this.tocPlaces = await tocPlaces(toc, ids, splitHref)
     }
     let nextId = 0
     const convert = (items: FoliateTocItem[] | null | undefined): TocItem[] =>
@@ -214,7 +359,14 @@ export class ReflowEngine implements Engine {
           children: convert(item.subitems),
         }
       })
-    this.toc = convert(book.toc)
+    this.toc = convert(toc)
+    const starts = new Set<number>()
+    for (const item of toc) {
+      const index = item.href ? this.resolve(item.href)?.index : undefined
+      const at = index != null ? this.sectionProgress.sectionFractions[index] : undefined
+      if (at != null && at > 0 && at < 1) starts.add(at)
+    }
+    this.chapterStarts = [...starts].sort((a, b) => a - b)
 
     await this.createRenderer()
     const start = init.location ? this.resolve(init.location) : null
@@ -326,7 +478,7 @@ export class ReflowEngine implements Engine {
     // Per-document sizing first: the renderer measures and re-fits each
     // section (keeping the reading position) as it takes the stylesheet.
     for (const { doc } of renderer.getContents()) this.styleDocument(doc)
-    renderer.setStyles?.(contentCSS(this.appearance))
+    renderer.setStyles?.(contentCSS(this.appearance) + REPAIRS_CSS)
   }
 
   private styleDocument(doc: Document): void {
@@ -400,16 +552,20 @@ export class ReflowEngine implements Engine {
   private onLoad({ doc, index }: { doc: Document; index: number }): void {
     const { book } = this
     const section = book.sections[index]
+    this.loaded.add(doc)
     doc.documentElement.lang ||= this.language
     if (book.dir === 'rtl') doc.documentElement.dir ||= 'rtl'
     this.options.prepare?.(doc, index)
+    this.markSelfLinks(doc, index)
     this.styleDocument(doc)
     this.renderMath(doc, index)
 
     doc.addEventListener('click', event => {
       const target = event.target as Element | null
       const link = target?.closest?.('a[href]')
-      if (link) {
+      // (the frame must not follow a heading's link to itself either)
+      if (link?.hasAttribute(SELF_LINK)) event.preventDefault()
+      else if (link) {
         event.preventDefault()
         const raw = link.getAttribute('href') ?? ''
         const href = section?.resolveHref?.(raw) ?? raw
@@ -467,6 +623,17 @@ export class ReflowEngine implements Engine {
     doc.addEventListener('wheel', this.onWheel, { passive: false })
   }
 
+  /** Marks the links that only lead to the heading they sit in (REPAIRS_CSS restyles them). */
+  private markSelfLinks(doc: Document, index: number): void {
+    const section = this.book.sections[index]
+    for (const link of doc.querySelectorAll(HEADING_LINKS)) {
+      const href = link.getAttribute('href') ?? ''
+      // (the same fragment in another file is a real link)
+      const here = href.startsWith('#') || this.resolve(section?.resolveHref?.(href) ?? href)?.index === index
+      if (here && isSelfLink(link)) link.setAttribute(SELF_LINK, '')
+    }
+  }
+
   /** Scrolled flow scrolls natively; in paginated flow a wheel gesture turns the page. */
   private onWheel = (event: WheelEvent): void => {
     if (this.renderer?.dataset.kind === 'bv-scroller' || event.ctrlKey) return
@@ -479,11 +646,18 @@ export class ReflowEngine implements Engine {
     else this.prev()
   }
 
-  private onRelocate({ range, index, fraction = 0, size }: RelocateDetail): void {
+  private onRelocate({ range, index, fraction = 0, size, atEnd }: RelocateDetail): void {
+    // foliate's paginator, laid out again while a section is still loading,
+    // reports a place in the empty document its frame has until then. That
+    // is nowhere in the book, and must not be taken (and saved) for where
+    // the reader is.
+    if (range && !this.loaded.has(range.startContainer.ownerDocument!)) return
     const progress = this.sectionProgress.getProgress(index, fraction, size)
     const tocItem = this.tocProgress?.getProgress(index, range ?? undefined)
     const location = this.locator.toLocation(index, range ?? null)
-    const bookFraction = Number.isFinite(progress.fraction) ? progress.fraction : 0
+    // The position is that of the top of the view, which stops short of the
+    // end by a screenful: a book read to its end is nevertheless finished.
+    const bookFraction = atEnd ? 1 : Number.isFinite(progress.fraction) ? progress.fraction : 0
     this.last = { index, range: range ?? null, location, fraction: bookFraction }
     let excerpt = ''
     try {
@@ -496,11 +670,19 @@ export class ReflowEngine implements Engine {
       location,
       tocId: tocItem?.id != null ? String(tocItem.id) : null,
       label: tocItem?.label?.trim() ?? '',
-      page: this.reflowable
-        ? { current: progress.location.current + 1, total: progress.location.total, unit: 'loc' }
-        : { current: index + 1, total: this.book.sections.length, unit: 'page' },
+      page: this.pageOf(index, progress),
       excerpt,
+      minutesLeft: this.reflowable
+        ? { chapter: progress.time.section, book: progress.time.total }
+        : undefined,
     })
+  }
+
+  /** The readout for a place: locations in a book that reflows, pages in one that does not. */
+  private pageOf(index: number, progress: SectionProgressInfo): Relocation['page'] {
+    return this.reflowable
+      ? { current: progress.location.current + 1, total: progress.location.total, unit: 'loc' }
+      : { current: index + 1, total: this.book.sections.length, unit: 'page' }
   }
 
   /** Approximate position of a range in the whole book, 0..1. */
@@ -534,7 +716,7 @@ export class ReflowEngine implements Engine {
     const resolved = this.resolve(target)
     if (!resolved || !this.renderer) return
     try {
-      await this.renderer.goTo(resolved)
+      await this.move(this.renderer.goTo(resolved))
     } catch (error) {
       console.warn(`Could not go to ${target}:`, error)
     }
@@ -542,27 +724,136 @@ export class ReflowEngine implements Engine {
 
   async goToFraction(fraction: number): Promise<void> {
     const [index, inSection] = this.sectionProgress.getSection(fraction)
-    await this.renderer?.goTo({ index, anchor: inSection })
+    await this.move(this.renderer?.goTo({ index, anchor: inSection }))
+  }
+
+  describe(fraction: number): { label: string; page: Relocation['page'] } {
+    const [index, inSection] = this.sectionProgress.getSection(fraction)
+    const item = this.entryInView(index, inSection) ?? tocEntryOf(this.tocPlaces, index)
+    return {
+      label: item?.label?.trim() ?? '',
+      page: this.pageOf(index, this.sectionProgress.getProgress(index, inSection)),
+    }
+  }
+
+  /**
+   * The contents entry at a position in a section that the scroller has laid
+   * out right now, found the way arriving there finds it: from the text that
+   * would be on screen. Undefined when the section is not at hand (telling
+   * would take loading it).
+   */
+  private entryInView(index: number, inSection: number): FoliateTocItem | null | undefined {
+    const { renderer, tocProgress } = this
+    if (renderer?.dataset.kind !== 'bv-scroller' || !tocProgress) return undefined
+    // (a section that is one entry from top to bottom needs no looking at)
+    const own = this.tocPlaces.filter(place => place.section === index)
+    if (own.length < 2 && !own[0]?.fragment) return undefined
+    const doc = renderer.getContents().find(content => content.index === index)?.doc
+    const view = doc?.defaultView
+    const frame = view?.frameElement as HTMLElement | null | undefined
+    if (!doc?.body || !view || !frame) return undefined
+    // The same reading the scroller takes when it reports a place: from just
+    // inside the text column at the top edge to the far corner of the screen.
+    const pad = parseFloat(view.getComputedStyle(doc.documentElement).paddingLeft) || 0
+    const width = doc.documentElement.clientWidth
+    const top = inSection * frame.offsetHeight
+    const bottom = Math.min(frame.offsetHeight - 1, top + renderer.clientHeight)
+    const caret = (x: number, y: number): Range | null => {
+      try {
+        return doc.caretRangeFromPoint(x, y)
+      } catch {
+        return null
+      }
+    }
+    const start = caret(pad + 2, top + 4) ?? caret(width / 2, top + 4)
+    const end = caret(width - pad - 2, bottom - 4) ?? caret(width / 2, bottom - 4)
+    if (!start) return undefined
+    const range = doc.createRange()
+    try {
+      range.setStart(start.startContainer, start.startOffset)
+      if (end && range.comparePoint(end.startContainer, end.startOffset) >= 0)
+        range.setEnd(end.startContainer, end.startOffset)
+    } catch {
+      return undefined
+    }
+    return tocProgress.getProgress(index, range)
+  }
+
+  isInView(location: string): boolean {
+    const { last, renderer, container } = this
+    if (!last || !renderer || !container) return false
+    if (location === last.location) return true
+    let resolved: Resolved | null
+    try {
+      resolved = this.locator.fromLocation(location)
+    } catch {
+      resolved = null
+    }
+    if (!resolved) return false
+    const { index, anchor } = resolved
+    const doc = renderer.getContents().find(content => (content.index ?? last.index) === index)?.doc
+    if (!doc?.body) return false
+    let rect: DOMRect | undefined
+    try {
+      const target = typeof anchor === 'function' ? anchor(doc) : (anchor ?? 0)
+      if (typeof target === 'number') {
+        // only the start of a section can be placed without laying it out again
+        if (target > 0) return false
+        rect = doc.body.getClientRects()[0]
+      } else if (target) {
+        const rects = Array.from(target.getClientRects())
+        rect = rects.find(r => r.width > 0 || r.height > 0) ?? rects[0]
+      }
+    } catch {
+      return false
+    }
+    if (!rect) return false
+    const at = toViewport(doc, rect)
+    const box = container.getBoundingClientRect()
+    if (renderer.dataset.kind === 'bv-scroller') {
+      // Nothing snaps to a page here: the place stays "this screen" until
+      // it is a good way above the top.
+      return at.top >= box.top - box.height * 0.4 && at.top < box.bottom
+    }
+    return at.left >= box.left - 1 && at.left < box.right - 1 && at.top < box.bottom
   }
 
   next(): void {
-    void this.renderer?.next()
+    void this.move(this.renderer?.next())
   }
 
   prev(): void {
-    void this.renderer?.prev()
+    void this.move(this.renderer?.prev())
   }
 
   step(direction: 1 | -1): void {
     const distance = this.flow === 'scrolled' ? 72 : undefined
-    void (direction > 0 ? this.renderer?.next(distance) : this.renderer?.prev(distance))
+    void this.move(direction > 0 ? this.renderer?.next(distance) : this.renderer?.prev(distance))
   }
 
   goToEdge(edge: 'start' | 'end'): void {
     const { sections } = this.book
     const linear = (section: { linear?: string }) => section.linear !== 'no'
-    if (edge === 'start') void this.renderer?.goTo({ index: Math.max(0, sections.findIndex(linear)) })
-    else void this.renderer?.goTo({ index: sections.findLastIndex(linear), anchor: 1 })
+    if (edge === 'start')
+      void this.move(this.renderer?.goTo({ index: Math.max(0, sections.findIndex(linear)) }))
+    else void this.move(this.renderer?.goTo({ index: sections.findLastIndex(linear), anchor: 1 }))
+  }
+
+  /** Keeps track of a move of the renderer until it is over. */
+  private move(done: Promise<void> | undefined): Promise<void> {
+    const over = Promise.resolve(done)
+    this.moving = Promise.allSettled([this.moving, over])
+    return over
+  }
+
+  flush(): void {
+    this.renderer?.flush?.()
+  }
+
+  settled(): Promise<void> {
+    // (not for ever: a section that will not load must not keep the reader waiting)
+    const patience = new Promise(resolve => setTimeout(resolve, 1000))
+    return Promise.race([this.moving, patience]).then(() => {})
   }
 
   focus(): void {
@@ -634,7 +925,7 @@ export class ReflowEngine implements Engine {
   async showAnnotation(annotation: Annotation): Promise<void> {
     const resolved = this.resolveAnnotation(annotation)
     if (!resolved || !this.renderer) return
-    await this.renderer.goTo(resolved)
+    await this.move(this.renderer.goTo(resolved))
     const content = this.renderer.getContents().find(c => c.index === resolved.index)
     const range = content ? resolved.anchor(content.doc) : null
     if (content && range)

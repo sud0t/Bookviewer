@@ -8,6 +8,58 @@ import { bookUrl } from '@shared/types'
 import type { FileLike, FoliateBook, ZipLoader } from 'foliate-js/types'
 import { openRemote } from './remote-file'
 
+export type OpenFailure = 'damaged' | 'missing' | 'unreadable' | 'unsupported' | 'locked'
+
+/** What the reader is told when a book cannot be opened: what happened, and what to do. */
+const SENTENCES: Record<OpenFailure, (path: string) => string> = {
+  damaged: () => 'This file is damaged or incomplete. Download or copy it again, then reopen it.',
+  missing: path =>
+    `Nothing was found at ${path}. The book may have been moved, renamed or deleted, or its drive is not connected.`,
+  unreadable: () => 'This file could not be read. Check that you are allowed to open it, then try again.',
+  unsupported: () =>
+    'BookViewer cannot read this kind of file. It opens EPUB, MOBI, AZW3, FB2, CBZ and PDF files, and saved web pages.',
+  locked: () =>
+    'This PDF is locked with a password, which BookViewer cannot ask for yet. Save a copy without the password to read it here.',
+}
+
+/**
+ * A book that could not be opened. `message` is a plain sentence for the
+ * reader, shown as it is; what actually went wrong is in `cause`.
+ */
+export class OpenError extends Error {
+  constructor(
+    readonly kind: OpenFailure,
+    path: string,
+    cause?: unknown,
+  ) {
+    super(SENTENCES[kind](path), { cause })
+    this.name = 'OpenError'
+  }
+}
+
+/** The file's content is not any format we know (as opposed to a broken file of a known one). */
+class UnknownFormat extends Error {}
+
+/**
+ * Turns whatever a parser or a failed request threw into an `OpenError`,
+ * leaving the technical detail in the console.
+ */
+export function openFailure(error: unknown, path: string): OpenError {
+  if (error instanceof OpenError) return error
+  console.warn(`Opening ${path} failed:`, error)
+  const { name, status, message } = (error ?? {}) as { name?: unknown; status?: unknown; message?: unknown }
+  // a request for the file's bytes that got no answer at all (the file is
+  // there, but reading it failed), or an answer other than "not found"
+  const refused =
+    typeof status === 'number' || (error instanceof TypeError && /failed to fetch|network error/i.test(String(message)))
+  let kind: OpenFailure = 'damaged'
+  if (status === 404) kind = 'missing'
+  else if (refused) kind = 'unreadable'
+  else if (name === 'PasswordException') kind = 'locked'
+  else if (error instanceof UnknownFormat) kind = 'unsupported'
+  return new OpenError(kind, path, error)
+}
+
 const startsWith = async (file: FileLike, bytes: number[]): Promise<boolean> => {
   const head = new Uint8Array(await file.slice(0, bytes.length).arrayBuffer())
   return bytes.every((byte, i) => head[i] === byte)
@@ -59,14 +111,22 @@ export async function makeBook(file: FileLike): Promise<FoliateBook> {
     const { makeFB2 } = await import('foliate-js/fb2.js')
     return makeFB2(file)
   }
-  throw new Error('This file type is not supported')
+  // A file that claims to be one of our formats but is not is a broken
+  // file; only something else altogether is "not supported".
+  if (/\.(epub|cbz|fbz|fb2\.zip|mobi|azw3?|kf8)$/.test(name))
+    throw new Error(`${file.name} is not what its name says: no ZIP or MOBI signature`)
+  throw new UnknownFormat(`${file.name} is in no known e-book format`)
 }
 
 export const fileName = (path: string): string => path.slice(path.lastIndexOf('/') + 1)
 
 export async function openFoliateBook(book: Book): Promise<FoliateBook> {
   const name = fileName(book.path)
-  return makeBook(await openRemote(bookUrl(book.id, name), name))
+  try {
+    return await makeBook(await openRemote(bookUrl(book.id, name), name))
+  } catch (error) {
+    throw openFailure(error, book.path)
+  }
 }
 
 type Localized = string | Record<string, string> | undefined
