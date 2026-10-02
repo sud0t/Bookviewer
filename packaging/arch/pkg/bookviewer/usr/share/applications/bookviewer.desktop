@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=BookViewer
+Comment=Read EPUB, PDF and saved HTML books
+Exec=bookviewer %U
+Icon=bookviewer
+Terminal=false
+Categories=Office;Viewer;Literature;
+Keywords=ebook;epub;pdf;reader;book;library;
+StartupWMClass=bookviewer
