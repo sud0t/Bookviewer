@@ -79,6 +79,11 @@ const HEAD_JUNK =
   'script, noscript, template, base, meta[http-equiv], link:not([rel~="stylesheet"])'
 
 const ISOLATE_CSS = `
+  /* A site that makes its body a scroll box (mdBook's overflow-x: hidden)
+     cannot be split into pages; let the text flow into the reader instead. */
+  html, body {
+    overflow: visible !important;
+  }
   [data-bv-chain] {
     display: block !important;
     position: static !important;

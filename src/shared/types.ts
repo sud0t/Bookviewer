@@ -147,7 +147,10 @@ export interface Annotation {
   updatedAt: number
 }
 
-export type NewAnnotation = Omit<Annotation, 'id' | 'createdAt' | 'updatedAt'>
+export type NewAnnotation = Omit<Annotation, 'id' | 'createdAt' | 'updatedAt'> & {
+  /** Only when putting back something that was removed: its original date. */
+  createdAt?: number
+}
 
 export interface Bookmark {
   id: number
@@ -160,7 +163,7 @@ export interface Bookmark {
   createdAt: number
 }
 
-export type NewBookmark = Omit<Bookmark, 'id' | 'createdAt'>
+export type NewBookmark = Omit<Bookmark, 'id' | 'createdAt'> & { createdAt?: number }
 
 /* ---------- settings ---------- */
 
@@ -198,6 +201,8 @@ export interface Settings {
   lookupLanguage: string
   translateTarget: string
   sidebarWidth: number
+  /** The library folder that catalog downloads are saved into; null until one has been chosen or used. */
+  downloadFolderId?: number | null
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -213,7 +218,7 @@ export const DEFAULT_SETTINGS: Settings = {
   publisherStyles: false,
   renderMath: true,
   maxColumns: 2,
-  pdfZoom: 'page-width',
+  pdfZoom: 'auto',
   pdfThemed: true,
   libraryView: 'grid',
   librarySort: 'recent',
@@ -225,6 +230,7 @@ export const DEFAULT_SETTINGS: Settings = {
   lookupLanguage: 'en',
   translateTarget: 'en',
   sidebarWidth: 300,
+  downloadFolderId: null,
 }
 
 /* ---------- lookup ---------- */

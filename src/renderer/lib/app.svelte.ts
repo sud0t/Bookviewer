@@ -9,18 +9,30 @@ import { ipc } from './ipc'
 
 const darkQuery = matchMedia('(prefers-color-scheme: dark)')
 
+export interface Toast {
+  message: string
+  kind: 'info' | 'error'
+  /**
+   * Something to do about what the toast reports. `undo` marks the ones that
+   * take the reported change back (Ctrl+Z runs those, and only those).
+   */
+  action?: { label: string; run: () => void; undo?: boolean }
+}
+
 /** Global UI state. */
 export const app = $state({
   ready: false,
   view: 'library' as 'library' | 'reader',
   bookId: null as number | null,
+  /** The book that was open last, so the library can put focus back on it. */
+  lastBookId: null as number | null,
   books: [] as Book[],
   folders: [] as Folder[],
   settings: { ...DEFAULT_SETTINGS } as Settings,
   scanning: {} as Record<number, boolean>,
   systemDark: darkQuery.matches,
   fullscreen: false,
-  toast: null as { message: string; kind: 'info' | 'error' } | null,
+  toast: null as Toast | null,
 })
 
 darkQuery.addEventListener('change', event => (app.systemDark = event.matches))
@@ -68,6 +80,7 @@ export function openBook(id: number): void {
 
 export function closeBook(): void {
   app.view = 'library'
+  app.lastBookId = app.bookId
   app.bookId = null
   void ipc.invoke('window:setTitle', 'BookViewer')
   void refreshLibrary()
@@ -75,10 +88,30 @@ export function closeBook(): void {
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined
 
-export function toast(message: string, kind: 'info' | 'error' = 'info'): void {
-  app.toast = { message, kind }
+export function toast(
+  message: string,
+  options: Toast['kind'] | { kind?: Toast['kind']; action?: Toast['action'] } = 'info',
+): void {
+  const { kind = 'info', action } = typeof options === 'string' ? { kind: options } : options
+  app.toast = { message, kind, action }
   clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => (app.toast = null), kind === 'error' ? 6000 : 3000)
+  // long enough to read, and to reach for the action when there is one
+  const reading = 2500 + message.length * 45
+  toastTimer = setTimeout(dismissToast, kind === 'error' ? 12000 : Math.max(action ? 7000 : 0, reading))
+}
+
+export function dismissToast(): void {
+  clearTimeout(toastTimer)
+  app.toast = null
+}
+
+/** Runs the action of the toast on screen, if it has one. */
+export function runToastAction(): boolean {
+  const action = app.toast?.action
+  if (!action) return false
+  dismissToast()
+  action.run()
+  return true
 }
 
 export async function initApp(): Promise<void> {

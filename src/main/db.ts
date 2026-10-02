@@ -441,6 +441,7 @@ export class Store {
 
   addAnnotation(a: NewAnnotation): Annotation {
     const now = Date.now()
+    const created = a.createdAt ?? now
     const info = this.db
       .prepare(
         `INSERT INTO annotations
@@ -456,7 +457,7 @@ export class Store {
         a.style,
         a.label,
         a.position,
-        now,
+        created,
         now,
       )
     return this.getAnnotation(Number(info.lastInsertRowid))!
@@ -502,7 +503,7 @@ export class Store {
         `INSERT INTO bookmarks (book_id, location, label, excerpt, position, created_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
       )
-      .run(b.bookId, b.location, b.label, b.excerpt, b.position, Date.now())
+      .run(b.bookId, b.location, b.label, b.excerpt, b.position, b.createdAt ?? Date.now())
     const row = this.db
       .prepare('SELECT * FROM bookmarks WHERE id = ?')
       .get(info.lastInsertRowid) as BookmarkRow

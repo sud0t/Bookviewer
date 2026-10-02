@@ -11,9 +11,24 @@ function plain<T>(value: T): T {
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, plain(item)])) as T
 }
 
+/**
+ * Electron reports a failed call as "Error invoking remote method 'channel':
+ * Error: what happened". Only the last part means anything to a reader.
+ */
+export function withoutIpcPrefix(message: string): string {
+  return message.replace(/^Error invoking remote method '[^']*': (?:[A-Za-z]*Error: )?/, '')
+}
+
+/** Rethrows a failed call with the message the main process gave, and nothing else. */
+function rethrow(cause: unknown): never {
+  if (!(cause instanceof Error)) throw cause
+  const message = withoutIpcPrefix(cause.message)
+  throw message === cause.message ? cause : new Error(message, { cause })
+}
+
 /** The typed bridge to the main process, exposed by the preload script. */
 export const ipc: Bridge = {
   invoke: (channel, ...args) =>
-    window.bridge.invoke(channel, ...(args.map(plain) as typeof args)),
+    window.bridge.invoke(channel, ...(args.map(plain) as typeof args)).catch(rethrow),
   on: (event, listener) => window.bridge.on(event, listener),
 }

@@ -1,7 +1,8 @@
 <script lang="ts">
   import Library from './Library/Library.svelte'
   import Reader from './Reader/Reader.svelte'
-  import { app, initApp, theme } from './lib/app.svelte'
+  import Icon from './lib/Icon.svelte'
+  import { app, dismissToast, initApp, runToastAction, theme } from './lib/app.svelte'
 
   $effect(() => {
     document.documentElement.dataset.theme = theme()
@@ -25,7 +26,15 @@
 {/if}
 
 {#if app.toast}
-  <div class="toast" class:error={app.toast.kind === 'error'} role="status">{app.toast.message}</div>
+  <div class="toast" class:error={app.toast.kind === 'error'} role="status">
+    <span class="toast-message">{app.toast.message}</span>
+    {#if app.toast.action}
+      <button class="toast-action" onclick={runToastAction}>{app.toast.action.label}</button>
+    {/if}
+    <button class="toast-close" aria-label="Dismiss" onclick={dismissToast}>
+      <Icon name="x" size={14} />
+    </button>
+  </div>
 {/if}
 
 <style>
@@ -38,18 +47,66 @@
   .toast {
     position: fixed;
     left: 50%;
-    bottom: 28px;
+    /* the reader raises this above its bottom bar (and its read-aloud bar) */
+    bottom: var(--toast-bottom, 28px);
     transform: translateX(-50%);
     z-index: 200;
+    display: flex;
+    align-items: center;
+    gap: 12px;
     max-width: min(560px, 90vw);
-    padding: 9px 16px;
+    padding: 8px 8px 8px 16px;
+    user-select: text;
     border-radius: var(--radius);
     background: var(--fg);
     color: var(--bg);
     box-shadow: var(--shadow-lg);
+    animation: toast-in 0.16s ease-out;
+  }
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translate(-50%, 6px);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .toast {
+      animation: none;
+    }
+  }
+  .toast-message {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .toast-close {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: var(--radius-sm);
+    color: inherit;
+    opacity: 0.7;
+  }
+  .toast-close:hover {
+    opacity: 1;
+    background: color-mix(in srgb, currentColor 16%, transparent);
+  }
+  .toast-action {
+    flex: none;
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .toast-action:hover {
+    background: color-mix(in srgb, currentColor 16%, transparent);
   }
   .toast.error {
-    background: var(--danger);
+    background: #a8291f;
     color: #fff;
   }
 </style>

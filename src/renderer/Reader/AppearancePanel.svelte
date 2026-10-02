@@ -1,21 +1,14 @@
 <script lang="ts">
-  import type { Settings, ThemeName } from '@shared/types'
-  import { PALETTES } from '../engines/appearance'
+  import type { Settings } from '@shared/types'
   import Icon from '../lib/Icon.svelte'
+  import ThemePicker from '../lib/ThemePicker.svelte'
   import { app, updateSettings } from '../lib/app.svelte'
 
   let { reflowable, pdf }: { reflowable: boolean; pdf: boolean } = $props()
 
   const settings = $derived(app.settings)
-  const THEMES: { name: ThemeName; label: string }[] = [
-    { name: 'light', label: 'Light' },
-    { name: 'sepia', label: 'Sepia' },
-    { name: 'gray', label: 'Gray' },
-    { name: 'dark', label: 'Dark' },
-    { name: 'black', label: 'Black' },
-  ]
   const FONTS = [
-    { value: '', label: 'Publisher' },
+    { value: '', label: 'Book’s own' },
     { value: 'serif', label: 'Serif' },
     { value: 'sans-serif', label: 'Sans' },
     { value: 'monospace', label: 'Mono' },
@@ -43,6 +36,7 @@
     updateSettings({ [key]: Math.min(max, Math.max(min, settings[key] + delta)) })
 
   const ZOOMS: { value: Settings['pdfZoom']; label: string }[] = [
+    { value: 'auto', label: 'Automatic' },
     { value: 'page-width', label: 'Fit width' },
     { value: 'page-fit', label: 'Fit page' },
     { value: 0.75, label: '75%' },
@@ -55,35 +49,13 @@
 
 <div class="panel">
   <section>
-    <h4>Theme</h4>
-    <div class="themes">
-      <button
-        class="swatch auto"
-        class:selected={settings.themeAuto}
-        title="Follow the system"
-        onclick={() => updateSettings({ themeAuto: true })}
-      >
-        Auto
-      </button>
-      {#each THEMES as theme (theme.name)}
-        <button
-          class="swatch"
-          class:selected={!settings.themeAuto && settings.theme === theme.name}
-          title={theme.label}
-          aria-label={theme.label}
-          style:background={PALETTES[theme.name].bg}
-          style:color={PALETTES[theme.name].fg}
-          onclick={() => updateSettings({ themeAuto: false, theme: theme.name })}
-        >
-          Aa
-        </button>
-      {/each}
-    </div>
+    <h2>Theme</h2>
+    <ThemePicker />
   </section>
 
   {#if pdf}
     <section>
-      <h4>Zoom</h4>
+      <h2>Zoom</h2>
       <select
         class="input"
         value={String(settings.pdfZoom)}
@@ -110,7 +82,7 @@
     </label>
   {:else}
     <section>
-      <h4>Layout</h4>
+      <h2>Layout</h2>
       <div class="segmented">
         <button class:selected={settings.flow === 'scrolled'} onclick={() => updateSettings({ flow: 'scrolled' })}>
           <Icon name="scroll" size={15} /> Scrolled
@@ -123,7 +95,7 @@
 
     {#if reflowable}
       <section>
-        <h4>Typeface</h4>
+        <h2>Typeface</h2>
         <div class="segmented">
           {#each FONTS as font (font.value)}
             <button class:selected={typeface === font.value} onclick={() => setTypeface(font.value)}>
@@ -147,13 +119,17 @@
         </select>
       {/if}
 
+      {#if settings.publisherStyles}
+        <p class="hint muted">Fonts, spacing and alignment follow the book’s own design.</p>
+      {/if}
+
       <section class="row">
-        <h4>Text size</h4>
+        <h2>Text size</h2>
         <div class="stepper">
           <button class="icon-btn" aria-label="Smaller text" onclick={() => step('fontSize', -1, 10, 40)}>
             <Icon name="minus" size={15} />
           </button>
-          <span>{settings.fontSize}px</span>
+          <span>{settings.fontSize}</span>
           <button class="icon-btn" aria-label="Larger text" onclick={() => step('fontSize', 1, 10, 40)}>
             <Icon name="plus" size={15} />
           </button>
@@ -161,25 +137,29 @@
       </section>
 
       <section>
-        <h4>Line spacing <span class="value">{settings.lineHeight.toFixed(2)}</span></h4>
+        <h2>Line spacing <span class="value">{settings.lineHeight.toFixed(2)}</span></h2>
         <input
           type="range"
           min="1.1"
           max="2.4"
           step="0.05"
           disabled={settings.publisherStyles}
+          aria-label="Line spacing"
+          style:--fill="{((settings.lineHeight - 1.1) / 1.3) * 100}%"
           value={settings.lineHeight}
           oninput={event => updateSettings({ lineHeight: Number(event.currentTarget.value) })}
         />
       </section>
 
       <section>
-        <h4>Column width <span class="value">{settings.maxWidth}px</span></h4>
+        <h2>Column width <span class="value">{settings.maxWidth}</span></h2>
         <input
           type="range"
           min="420"
           max="1400"
           step="20"
+          aria-label="Column width"
+          style:--fill="{((settings.maxWidth - 420) / 980) * 100}%"
           value={settings.maxWidth}
           oninput={event => updateSettings({ maxWidth: Number(event.currentTarget.value) })}
         />
@@ -235,7 +215,7 @@
     flex-direction: column;
     gap: 14px;
   }
-  h4 {
+  h2 {
     margin: 0 0 6px;
     font-size: 12px;
     font-weight: 600;
@@ -246,28 +226,10 @@
   .value {
     font-weight: 400;
   }
-  .themes {
-    display: grid;
-    grid-template-columns: repeat(6, 1fr);
-    gap: 6px;
-  }
-  .swatch {
-    height: 36px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
-    font-family: Georgia, serif;
-    font-size: 14px;
-  }
-  .swatch.auto {
-    font-family: inherit;
-    font-size: 11px;
-    font-weight: 600;
-    background: var(--surface-2);
-    color: var(--fg);
-  }
-  .swatch.selected {
-    outline: 2px solid var(--accent);
-    outline-offset: 1px;
+  .hint {
+    margin: -6px 0 0;
+    font-size: 12px;
+    line-height: 1.4;
   }
   .segmented {
     display: flex;
@@ -288,15 +250,16 @@
     border-left: 1px solid var(--border);
   }
   .segmented button.selected {
-    background: var(--accent);
-    color: var(--accent-fg);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
   }
   .row {
     display: flex;
     align-items: center;
     justify-content: space-between;
   }
-  .row h4 {
+  .row h2 {
     margin: 0;
   }
   .stepper {
@@ -310,7 +273,6 @@
   }
   input[type='range'] {
     width: 100%;
-    accent-color: var(--accent);
   }
   .checks {
     display: flex;
@@ -321,9 +283,6 @@
     display: flex;
     align-items: center;
     gap: 6px;
-  }
-  .check input {
-    accent-color: var(--accent);
   }
   select {
     width: 100%;

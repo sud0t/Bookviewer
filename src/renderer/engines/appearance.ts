@@ -3,6 +3,7 @@
  * dark themes. Works on the same-origin iframe documents the renderers load.
  */
 import type { ThemeName } from '@shared/types'
+import { READING_FONT, readingFontCSS } from './fonts'
 import type { Appearance } from './types'
 
 interface Palette {
@@ -44,8 +45,9 @@ export function preInvert(hex: string): string {
 }
 
 const FONT_STACKS: Record<string, string> = {
-  serif: "'Literata', 'Source Serif 4', 'Noto Serif', 'Liberation Serif', Georgia, serif",
-  'sans-serif': "'Inter', 'Noto Sans', 'Cantarell', 'Liberation Sans', system-ui, sans-serif",
+  serif: `'${READING_FONT}', 'Literata', 'Source Serif 4', 'Noto Serif', 'Liberation Serif', Georgia, serif`,
+  'sans-serif':
+    "'Inter', 'Adwaita Sans', 'Noto Sans', 'Cantarell', 'Liberation Sans', system-ui, sans-serif",
   monospace: "'JetBrains Mono', 'Fira Code', 'Noto Sans Mono', monospace",
 }
 
@@ -67,6 +69,7 @@ export function contentCSS({ settings, theme }: Appearance): string {
 
   return `
     @namespace epub "http://www.idpf.org/2007/ops";
+    ${own ? readingFontCSS() : ''}
     html, body {
       background: ${bg} !important;
       color: ${fg} !important;
@@ -76,7 +79,7 @@ export function contentCSS({ settings, theme }: Appearance): string {
       -webkit-text-size-adjust: none;
     }
     a:any-link { color: ${link}; }
-    ::selection { background: ${palette.invert ? '#c98f3a88' : '#3b82f655'}; }
+    ::selection { background: ${palette.invert ? preInvert('#3b82f6') + '77' : '#3b82f655'}; }
     ${
       own
         ? `

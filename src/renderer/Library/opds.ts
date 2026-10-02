@@ -4,6 +4,7 @@
  */
 import type { OpdsResponse } from '@shared/types'
 import { SYMBOL, getFeed, getPublication } from 'foliate-js/opds.js'
+import { withoutIpcPrefix } from '../lib/ipc'
 
 export interface OpdsNavItem {
   title: string
@@ -22,6 +23,7 @@ export interface OpdsPublication {
   author: string
   summary: string
   cover: string | null
+  /** The format to offer first (EPUB, else PDF) comes first. */
   acquisitions: OpdsAcquisition[]
   /** A page with more about the book, when the feed links to one. */
   details: string | null
@@ -89,6 +91,23 @@ function nameOf(value: unknown): string {
   return ''
 }
 
+/** The address answered, but not with a catalog. */
+export class NotCatalogError extends Error {
+  constructor() {
+    super('not a catalog')
+    this.name = 'NotCatalogError'
+  }
+}
+
+/** Formats in the order to offer them: EPUB reads best here, then PDF, then the rest as listed. */
+export function preferredFirst(acquisitions: OpdsAcquisition[]): OpdsAcquisition[] {
+  const rank = (label: string) => (label === 'EPUB' ? 0 : label === 'PDF' ? 1 : 2)
+  return acquisitions
+    .map((acquisition, index) => ({ acquisition, index }))
+    .sort((a, b) => rank(a.acquisition.label) - rank(b.acquisition.label) || a.index - b.index)
+    .map(item => item.acquisition)
+}
+
 const stripHtml = (html: string): string =>
   new DOMParser().parseFromString(html, 'text/html').body.textContent?.replace(/\s+/g, ' ').trim() ?? ''
 
@@ -104,15 +123,22 @@ export function parseFeed(response: OpdsResponse): OpdsFeed {
 
   const isJson = /json/i.test(response.contentType) || response.body.trimStart().startsWith('{')
   let raw: RawGroup
-  if (isJson) raw = JSON.parse(response.body) as RawGroup
-  else {
+  if (isJson) {
+    try {
+      raw = JSON.parse(response.body) as RawGroup
+    } catch {
+      throw new NotCatalogError()
+    }
+    const parts = ['metadata', 'links', 'navigation', 'publications', 'groups']
+    if (!raw || typeof raw !== 'object' || !parts.some(part => part in raw)) throw new NotCatalogError()
+  } else {
     const doc = new DOMParser().parseFromString(response.body, 'application/xml')
-    if (doc.querySelector('parsererror')) throw new Error('This is not an OPDS catalog')
+    if (doc.querySelector('parsererror')) throw new NotCatalogError()
     const root = doc.documentElement
     if (root.localName === 'entry')
       raw = { metadata: {}, publications: [getPublication(root) as RawPublication] }
     else if (root.localName === 'feed') raw = getFeed(doc) as RawGroup
-    else throw new Error('This is not an OPDS catalog')
+    else throw new NotCatalogError()
   }
 
   const publication = (pub: RawPublication): OpdsPublication => {
@@ -137,7 +163,7 @@ export function parseFeed(response: OpdsResponse): OpdsFeed {
       author: nameOf(metadata.author),
       summary: /<[a-z]/i.test(description) ? stripHtml(description) : description.trim(),
       cover: resolve(pub.images?.[0]?.href),
-      acquisitions,
+      acquisitions: preferredFirst(acquisitions),
       details,
     }
   }
@@ -227,4 +253,86 @@ export async function searchUrl(
   const doc = new DOMParser().parseFromString(description.body, 'application/xml')
   const filled = openSearchUrl(doc, terms)
   return filled ? new URL(filled, description.url).href : null
+}
+
+/** "m.gutenberg.org" - who a catalog address talks to, for messages. */
+export function hostOf(url: string): string {
+  try {
+    return new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(url) ? url : `https://${url}`).host
+  } catch {
+    return ''
+  }
+}
+
+/** Two titles that a reader would call the same. */
+export const sameTitle = (a: string, b: string): boolean =>
+  a.replace(/\s+/g, ' ').trim().toLowerCase() === b.replace(/\s+/g, ' ').trim().toLowerCase()
+
+/**
+ * Says what went wrong with a catalog request, and what to do about it, in a
+ * sentence for the reader. `cause` is whatever was thrown: a network error
+ * ("net::ERR_..."), the main process's "HTTP 404" / "timeout" / "too large" /
+ * "not a book", or a feed that would not parse. `host` is who was asked.
+ */
+export function friendlyError(cause: unknown, host: string): string {
+  const text = withoutIpcPrefix(cause instanceof Error ? cause.message : String(cause ?? ''))
+  const who = host || 'the server'
+  const Who = host || 'The server'
+  const unreachable = `Can't reach ${who}. Check the address and your connection.`
+  const notResponding = `${Who} isn't responding right now. Try again in a moment.`
+
+  if (cause instanceof NotCatalogError || cause instanceof SyntaxError || /not an? (OPDS )?catalog/i.test(text))
+    return "That address isn't a catalog. Check that it is the catalog's own address, not an ordinary web page."
+  if (/not a book/i.test(text))
+    return "That link doesn't lead to a book file. The catalog may need you to sign in on its website first."
+  if (/too large/i.test(text)) return 'That is larger than BookViewer can load.'
+  if (/Invalid URL|Only http and https/i.test(text))
+    return "That doesn't look like a web address. It should start with https:// or http://."
+  if (/Unknown library folder|ENOENT/.test(text))
+    return "The folder to save into can't be found. Choose another one under “Save to”."
+  if (/EACCES|EPERM|EROFS/.test(text))
+    return "BookViewer isn't allowed to write to that folder. Choose another one under “Save to”."
+  if (/ENOSPC/.test(text)) return 'The disk is full. Free some space and try again.'
+
+  const network = /\bERR_[A-Z_]+/.exec(text)?.[0]
+  if (network) {
+    if (network === 'ERR_INTERNET_DISCONNECTED') return "You're offline. Check your connection and try again."
+    if (/TIMED_OUT|EMPTY_RESPONSE/.test(network)) return notResponding
+    if (/CERT|SSL/.test(network))
+      return `The connection to ${who} isn't secure, so nothing was loaded. Check the address.`
+    return unreachable
+  }
+  if (/timeout|timed out|aborted/i.test(text)) return notResponding
+
+  const status = Number(/\bHTTP (\d{3})\b/.exec(text)?.[1] ?? /^(\d{3})\b/.exec(text)?.[1])
+  if (status === 401 || status === 403 || status === 407)
+    return "This catalog needs a sign-in, which BookViewer doesn't support yet."
+  if (status === 404 || status === 410) return 'Nothing was found at that address.'
+  if (status === 408 || status === 429 || status >= 500) return notResponding
+  if (status >= 400) return `${Who} turned the request down (error ${status}).`
+
+  return `Something went wrong while talking to ${who}. Try again in a moment.`
+}
+
+/**
+ * The home directory the library folders live in, when they agree on one.
+ * The UI has no other way to learn it; with folders under two different homes
+ * (or none) paths are shown in full instead.
+ */
+export function homeOf(paths: string[]): string | null {
+  const homes = new Set(paths.flatMap(path => /^\/(?:home\/[^/]+|root)(?=\/|$)/.exec(path)?.[0] ?? []))
+  return homes.size === 1 ? [...homes][0] : null
+}
+
+/** "~/Books" for a path inside `home`; a long path keeps only its last two folders ("…/Shelves/Books"). */
+export function shortenHome(path: string, home: string | null): string {
+  const short = home && (path === home || path.startsWith(home + '/')) ? '~' + path.slice(home.length) : path
+  const parts = short.split('/')
+  return short.length > 40 && parts.length > 3 ? '…/' + parts.slice(-2).join('/') : short
+}
+
+/** "Books (~/Books)": a folder's name, then where it is, so that two "Books" can be told apart. */
+export function folderLabel(path: string, home: string | null): string {
+  const name = path.split('/').filter(Boolean).pop() ?? path
+  return `${name} (${shortenHome(path, home)})`
 }
