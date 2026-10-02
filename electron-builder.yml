@@ -1,0 +1,56 @@
+appId: io.github.bookviewer
+productName: BookViewer
+copyright: Copyright © 2026 sud0t
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - out/**
+  - resources/**
+  - package.json
+  - LICENSE
+  - "!**/*.map"
+
+# better-sqlite3 ships prebuilt N-API binaries for every platform; they need
+# no rebuilding against Electron, only to sit outside the asar archive.
+npmRebuild: false
+asarUnpack:
+  - node_modules/better-sqlite3/**
+
+linux:
+  target:
+    - AppImage
+    - deb
+    - pacman
+  category: Office
+  icon: build/icons
+  executableName: bookviewer
+  synopsis: Library and reader for EPUB, PDF and saved HTML books
+  description: Library and reader for EPUB, PDF and saved HTML books
+  desktop:
+    entry:
+      Name: BookViewer
+      Comment: Read EPUB, PDF and saved HTML books
+      Keywords: ebook;epub;pdf;reader;book;library;
+      StartupWMClass: bookviewer
+
+deb:
+  depends:
+    - libgtk-3-0
+    - libnss3
+    - libxss1
+    - libasound2
+  recommends:
+    - espeak-ng
+
+pacman:
+  depends:
+    - gtk3
+    - nss
+    - alsa-lib
+  packageCategory: office
+
+appImage:
+  artifactName: ${productName}-${version}-${arch}.AppImage

@@ -1,0 +1,62 @@
+# Maintainer: sud0t <klgrway@gmail.com>
+#
+# Builds BookViewer from this checkout against the system Electron:
+#
+#     cd packaging/arch && makepkg -si
+#
+# (`npm run dist` instead produces a self-contained AppImage, .deb and
+# .pacman package that bundle their own Electron.)
+
+pkgname=bookviewer
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Library and reader for EPUB, PDF and saved HTML books'
+arch=('x86_64' 'aarch64')
+url='https://example.invalid/bookviewer' # set to the project's real home
+license=('MIT')
+depends=('electron' 'hicolor-icon-theme')
+makedepends=('npm' 'git')
+optdepends=('espeak-ng: read aloud'
+            'speech-dispatcher: system voices for read aloud'
+            'piper-tts: natural sounding voices for read aloud')
+options=('!strip')
+
+_src="$startdir/../.."
+
+build() {
+  cd "$_src"
+  git submodule update --init
+  # Electron itself comes from the system package.
+  ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci --ignore-scripts
+  npm run build
+}
+
+package() {
+  cd "$_src"
+  local app="$pkgdir/usr/lib/$pkgname"
+  install -d "$app"
+  cp -r out resources package.json "$app/"
+
+  # Runtime dependencies only (the renderer's are already bundled into out/).
+  install -d "$app/node_modules"
+  ( cd "$app" && npm install --omit=dev --ignore-scripts --no-audit --no-fund --no-package-lock \
+      --cache "$srcdir/npm-cache" )
+  find "$app/node_modules" -name '*.map' -delete
+  # keep only this architecture's prebuilt SQLite binding
+  find "$app/node_modules/better-sqlite3/prebuilds" -type f \
+    ! -name "linux-$( [ "$CARCH" = aarch64 ] && echo arm64 || echo x64 ).node" -delete
+
+  install -Dm755 /dev/stdin "$pkgdir/usr/bin/$pkgname" <<'LAUNCHER'
+#!/bin/sh
+exec electron /usr/lib/bookviewer "$@"
+LAUNCHER
+
+  install -Dm644 "$_src/packaging/bookviewer.desktop" \
+    "$pkgdir/usr/share/applications/$pkgname.desktop"
+  for size in 16 32 48 64 128 256 512; do
+    install -Dm644 "build/icons/${size}x${size}.png" \
+      "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/$pkgname.png"
+  done
+  install -Dm644 build/icon.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/$pkgname.svg"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

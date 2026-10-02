@@ -1,0 +1,46 @@
+{
+  "name": "bookviewer",
+  "productName": "BookViewer",
+  "version": "0.1.0",
+  "description": "A library and reader for EPUB, PDF and saved HTML books, with highlights, lookup, search and TTS",
+  "homepage": "https://example.invalid/bookviewer",
+  "license": "MIT",
+  "author": "sud0t <klgrway@gmail.com>",
+  "type": "module",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && svelte-check --tsconfig tsconfig.web.json",
+    "test": "vitest run",
+    "test:e2e": "npm run build && playwright test",
+    "dist": "npm run build && electron-builder --linux",
+    "dist:dir": "npm run build && electron-builder --linux --dir"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "cheerio": "^1.2.0",
+    "chokidar": "^5.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@sveltejs/vite-plugin-svelte": "^6.2.4",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.19.1",
+    "domhandler": "^6.0.1",
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "highlight.js": "^11.12.0",
+    "jsdom": "^30.1.1",
+    "mathjax": "^3.2.2",
+    "pdfjs-dist": "^6.3.289",
+    "svelte": "^5.57.1",
+    "svelte-check": "^4.7.6",
+    "typescript": "^6.0.3",
+    "vite": "^7.3.6",
+    "vitest": "^5.0.3"
+  },
+  "private": true
+}

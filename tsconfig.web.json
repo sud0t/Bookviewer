@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "target": "ES2023",
+    "lib": ["ES2023", "ESNext.Intl", "DOM", "DOM.Iterable", "DOM.AsyncIterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
+    "allowJs": false,
+    "noUnusedLocals": true,
+    "types": ["svelte", "vite/client"],
+    "paths": { "@shared/*": ["./src/shared/*"] }
+  },
+  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.svelte", "src/shared/**/*", "src/preload/*.d.ts"]
+}

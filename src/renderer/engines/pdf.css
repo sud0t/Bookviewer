@@ -1,0 +1,75 @@
+/* Our additions to pdf.js's own viewer stylesheet. */
+.bv-pdf {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  outline: none;
+  background: var(--bv-pdf-bg, var(--surface-2));
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--fg-muted) 45%, transparent) transparent;
+  user-select: text;
+}
+
+.bv-pdf .pdfViewer .page {
+  margin: 10px auto;
+  border: 0;
+  box-shadow: var(--shadow);
+}
+
+.bv-pdf[data-tint='sepia'] .page canvas {
+  filter: sepia(0.35) brightness(0.97) contrast(0.95);
+}
+
+.bv-pdf[data-tint='dark'] .page {
+  background-color: #1c1b1a;
+}
+
+.bv-pdf[data-tint='dark'] .page canvas {
+  filter: invert(0.9) hue-rotate(180deg);
+}
+
+.bv-pdf-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.bv-mark {
+  position: absolute;
+  box-sizing: border-box;
+}
+
+.bv-highlight {
+  background: var(--color);
+  opacity: 0.4;
+  mix-blend-mode: multiply;
+  border-radius: 2px;
+}
+
+.bv-pdf[data-tint='dark'] .bv-highlight {
+  mix-blend-mode: screen;
+  opacity: 0.38;
+}
+
+.bv-underline {
+  border-bottom: 2px solid var(--color);
+}
+
+.bv-squiggly {
+  border-bottom: 2px dotted var(--color);
+}
+
+.bv-strikethrough {
+  background: linear-gradient(
+    transparent calc(50% - 1px),
+    var(--color) calc(50% - 1px),
+    var(--color) calc(50% + 1px),
+    transparent calc(50% + 1px)
+  );
+}
+
+.bv-speech {
+  background: var(--color);
+  opacity: 0.22;
+  border-radius: 2px;
+}
