@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!--
+    BookViewer icon, "warm paper" direction.
+    An open book in ink navy on a cream tile; the eye is an opening in the pages
+    that straddles the spine, with an amber iris as the only saturated colour.
+    Everything is mirrored about x = 256 (the spine), except the small catch-light
+    in the pupil. Corners are rounded by a 16 px round-joined stroke in the fill colour.
+  -->
+  <defs>
+    <!-- tile -->
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFF9EC"/>
+      <stop offset="1" stop-color="#F3DDBB"/>
+    </linearGradient>
+    <radialGradient id="glow" gradientUnits="userSpaceOnUse" cx="256" cy="190" r="280">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.9"/>
+      <stop offset="0.5" stop-color="#C79A5B" stop-opacity="0.25"/>
+      <stop offset="1" stop-color="#C79A5B" stop-opacity="0.4"/>
+    </linearGradient>
+
+    <!-- pages: lighter where each page swells, a narrow dark crease at the spine -->
+    <linearGradient id="ink" gradientUnits="userSpaceOnUse" x1="98" y1="0" x2="414" y2="0">
+      <stop offset="0" stop-color="#1E2A4F"/>
+      <stop offset="0.33" stop-color="#2A3963"/>
+      <stop offset="0.48" stop-color="#212D53"/>
+      <stop offset="0.5" stop-color="#131A34"/>
+      <stop offset="0.52" stop-color="#212D53"/>
+      <stop offset="0.67" stop-color="#2A3963"/>
+      <stop offset="1" stop-color="#1E2A4F"/>
+    </linearGradient>
+    <!-- top light / bottom shade laid over the pages -->
+    <linearGradient id="shade" gradientUnits="userSpaceOnUse" x1="0" y1="155" x2="0" y2="353">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.08"/>
+      <stop offset="0.45" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="0.55" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.18"/>
+    </linearGradient>
+    <!-- paper edge under the pages -->
+    <linearGradient id="edge" gradientUnits="userSpaceOnUse" x1="98" y1="0" x2="414" y2="0">
+      <stop offset="0" stop-color="#E7C596"/>
+      <stop offset="0.5" stop-color="#D6AE78"/>
+      <stop offset="1" stop-color="#E7C596"/>
+    </linearGradient>
+
+    <radialGradient id="iris" gradientUnits="userSpaceOnUse" cx="256" cy="233.5" r="58.5">
+      <stop offset="0" stop-color="#FFCE6A"/>
+      <stop offset="0.7" stop-color="#FA8B3A"/>
+      <stop offset="1" stop-color="#EB6A2A"/>
+    </radialGradient>
+
+    <!-- the eye opening: corners at (164,254) and (348,254), taller upper lid, flatter lower lid -->
+    <clipPath id="lids">
+      <path d="M 164 254 C 198 220 220 208 256 208 C 292 208 314 220 348 254 C 308 280 290 292 256 292 C 222 292 204 280 164 254 Z"/>
+    </clipPath>
+
+    <!-- page silhouette, used to confine the shade overlay -->
+    <mask id="pages" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <path d="M 256 177 C 234 147 200 127 116 163 L 106 317 C 190 301 234 319 256 345 C 278 319 322 301 406 317 L 396 163 C 312 127 278 147 256 177 Z" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="16" stroke-linejoin="round"/>
+    </mask>
+
+    <!-- soft blur for the shadow the upper lid casts into the eye -->
+    <filter id="soft" filterUnits="userSpaceOnUse" x="124" y="168" width="264" height="164">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+
+    <!-- book shadow: a tight contact shadow plus a wide ambient one, warm brown -->
+    <filter id="lift" x="-25%" y="-25%" width="150%" height="160%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="3"/>
+      <feOffset dy="3" result="b1"/>
+      <feFlood flood-color="#4A2C10" flood-opacity="0.22"/>
+      <feComposite in2="b1" operator="in" result="s1"/>
+      <feGaussianBlur in="SourceAlpha" stdDeviation="14"/>
+      <feOffset dy="14" result="b2"/>
+      <feFlood flood-color="#4A2C10" flood-opacity="0.22"/>
+      <feComposite in2="b2" operator="in" result="s2"/>
+      <feMerge>
+        <feMergeNode in="s1"/>
+        <feMergeNode in="s2"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- paper tile -->
+  <rect x="24" y="24" width="464" height="464" rx="104" fill="url(#bg)"/>
+  <rect x="24" y="24" width="464" height="464" rx="104" fill="url(#glow)"/>
+  <rect x="25" y="25" width="462" height="462" rx="103" fill="none" stroke="url(#rim)" stroke-width="2"/>
+
+  <!-- the open book: paper edge underneath, ink pages on top -->
+  <g filter="url(#lift)">
+    <path d="M 106 297 L 106 332 C 190 316 236 357 256 357 C 276 357 322 316 406 332 L 406 297 Z" fill="url(#edge)" stroke="url(#edge)" stroke-width="16" stroke-linejoin="round"/>
+    <path d="M 256 177 C 234 147 200 127 116 163 L 106 317 C 190 301 234 319 256 345 C 278 319 322 301 406 317 L 396 163 C 312 127 278 147 256 177 Z" fill="url(#ink)" stroke="url(#ink)" stroke-width="16" stroke-linejoin="round"/>
+  </g>
+  <rect x="90" y="133" width="332" height="228" fill="url(#shade)" mask="url(#pages)"/>
+
+  <!-- the eye, an opening in the pages across the spine -->
+  <g clip-path="url(#lids)">
+    <rect x="160" y="204" width="192" height="92" fill="#FFFDF7"/>
+    <circle cx="256" cy="247" r="45" fill="url(#iris)"/>
+    <circle cx="256" cy="247" r="21" fill="#131A33"/>
+    <path d="M 164 254 C 198 220 220 208 256 208 C 292 208 314 220 348 254" fill="none" stroke="#131A33" stroke-width="14" stroke-opacity="0.34" filter="url(#soft)"/>
+    <circle cx="271" cy="232" r="7.5" fill="#FFFDF7"/>
+  </g>
+</svg>
