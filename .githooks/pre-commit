@@ -1,0 +1,53 @@
+#!/bin/sh
+# Refuses a commit that would publish something private. Enable once per clone:
+#
+#     git config core.hooksPath .githooks
+#
+# Checked, in what is about to be committed:
+#   - build output and local data that must never be tracked
+#   - this machine's home directory or user name
+#   - anything listed in .git/info/private-strings (one string per line; that
+#     file is never committed: put an email address or a real name there)
+#   - things that look like keys and tokens
+fail=0
+say() { printf 'pre-commit: %s\n' "$*" >&2; fail=1; }
+
+files=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$files" ] && exit 0
+
+echo "$files" | grep -E '(^|/)(\.BUILDINFO|\.PKGINFO|\.MTREE|\.env(\..*)?|\.npmrc)$|\.pkg\.tar\.[a-z]+$|\.(db|sqlite|pem|key)$|^packaging/arch/(pkg|src)/' |
+while read -r file; do echo "$file"; done > "${TMPDIR:-/tmp}/bv-precommit.$$"
+if [ -s "${TMPDIR:-/tmp}/bv-precommit.$$" ]; then
+  say "these files must not be committed (build output, local data or credentials):"
+  sed 's/^/    /' "${TMPDIR:-/tmp}/bv-precommit.$$" >&2
+fi
+rm -f "${TMPDIR:-/tmp}/bv-precommit.$$"
+
+# only the lines being added, with the file each is in (not this hook: it spells the patterns out)
+added=$(git diff --cached -U0 --diff-filter=ACMR --no-color -- . ':!package-lock.json' ':!vendor' ':!.githooks' |
+  grep -E '^(\+\+\+ b/|\+[^+])')
+
+check() { # check <fixed|regex> <pattern> <what>
+  if [ "$1" = fixed ]; then hits=$(printf '%s\n' "$added" | grep -n -F -i -- "$2")
+  else hits=$(printf '%s\n' "$added" | grep -n -E -- "$2"); fi
+  [ -n "$hits" ] || return 0
+  say "$3:"
+  printf '%s\n' "$hits" | cut -c1-160 | head -5 | sed 's/^/    /' >&2
+}
+
+[ -n "$HOME" ] && check fixed "$HOME" "this machine's home directory is in the changes"
+user=$(id -un 2>/dev/null)
+[ "${#user}" -ge 4 ] && check fixed "/home/$user" "this machine's user name is in the changes"
+private="$(git rev-parse --git-dir)/info/private-strings"
+if [ -f "$private" ]; then
+  while IFS= read -r string; do
+    [ -n "$string" ] && check fixed "$string" "a string listed as private is in the changes"
+  done < "$private"
+fi
+check regex 'BEGIN [A-Z ]*PRIVATE KEY|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|_authToken=|xox[bp]-[A-Za-z0-9-]{20,}' \
+  "something that looks like a key or token is in the changes"
+
+if [ "$fail" = 1 ]; then
+  echo "pre-commit: commit refused. Fix the above, or (if it is a false alarm) commit with --no-verify." >&2
+  exit 1
+fi

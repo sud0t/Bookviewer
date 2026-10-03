@@ -74,6 +74,10 @@ After a UI change, look at the tour's screenshots (the `ui-check` skill in
 `.claude/skills/` describes the loop; `frontend-design` there is the design guidance).
 
 After cloning: `git submodule update --init` (foliate-js lives in `vendor/`).
+Then `git config core.hooksPath .githooks`: the pre-commit hook refuses commits
+that contain build output (`packaging/arch/pkg`, `.BUILDINFO`, packages), this
+machine's home path or user name, key-like strings, or anything listed in the
+untracked `.git/info/private-strings`. The repository is public.
 
 ## Where everything is
 

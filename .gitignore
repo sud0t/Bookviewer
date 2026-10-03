@@ -13,3 +13,15 @@ playwright-report/
 packaging/arch/pkg/
 packaging/arch/src/
 packaging/arch/*.pkg.tar.*
+
+# never publish: local data, credentials, machine-specific settings
+.env
+.env.*
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.pem
+*.key
+.npmrc
+.claude/settings.local.json
