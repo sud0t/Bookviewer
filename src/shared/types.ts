@@ -86,7 +86,7 @@ export interface WebPage {
 }
 
 /** Bump when the scanner gets better at reading sites, so that books are re-read. */
-export const WEB_MANIFEST_VERSION = 2
+export const WEB_MANIFEST_VERSION = 3
 
 export interface WebBookManifest {
   version: number
@@ -201,6 +201,8 @@ export interface Settings {
   lookupLanguage: string
   translateTarget: string
   sidebarWidth: number
+  /** Ask Open Library for the cover of a book that has none of its own. */
+  onlineCovers: boolean
   /** The library folder that catalog downloads are saved into; null until one has been chosen or used. */
   downloadFolderId?: number | null
 }
@@ -230,6 +232,7 @@ export const DEFAULT_SETTINGS: Settings = {
   lookupLanguage: 'en',
   translateTarget: 'en',
   sidebarWidth: 300,
+  onlineCovers: true,
   downloadFolderId: null,
 }
 
@@ -278,6 +281,21 @@ export interface ScanProgress {
   found: number
 }
 
+export interface GrabProgress {
+  done: number
+  total: number
+  label: string
+}
+
+export interface GrabbedBook {
+  /** The new book, once the scanner has it (null if it did not recognise one). */
+  bookId: number | null
+  title: string
+  /** Pages saved; 0 for a file downloaded as it is. */
+  pages: number
+  path: string
+}
+
 export type ExportFormat = 'markdown' | 'json'
 
 /** Request/response channels, handled in the main process. */
@@ -297,6 +315,17 @@ export interface IpcHandlers {
   'books:manifest'(id: number): WebBookManifest | null
   'books:showInFolder'(id: number): void
   'books:forget'(id: number): void
+  /** Takes a book out of the library list without touching the file or its notes. */
+  'books:setHidden'(id: number, hidden: boolean): void
+  'books:hiddenCount'(): number
+  'books:restoreHidden'(): void
+  /**
+   * Files or folders handed to the app (dropped on the window): folders join
+   * the library; resolves to the book to open when it was a single book file.
+   */
+  'library:openPaths'(paths: string[]): number | null
+  /** The book named on the command line this run was started with, once. */
+  'library:launchBook'(): number | null
 
   'annotations:list'(bookId: number): Annotation[]
   'annotations:add'(annotation: NewAnnotation): Annotation
@@ -317,6 +346,8 @@ export interface IpcHandlers {
 
   'lookup:wikipedia'(query: string, language: string): WikipediaSummary | null
   'lookup:dictionary'(query: string, language: string): DictionaryEntry[]
+  /** A published book's cover image (from Open Library), or null. */
+  'lookup:cover'(title: string, author: string): Uint8Array | null
 
   'tts:voices'(engine: 'espeak' | 'piper'): TtsVoice[]
   /** Synthesizes speech to a WAV file's bytes. */
@@ -334,6 +365,14 @@ export interface IpcHandlers {
   /** Downloads into a library folder; resolves to the saved path. */
   'opds:download'(url: string, folderId: number, suggestedName: string): string
 
+  /**
+   * Saves what is at a web address into a library folder (null: the default
+   * one, ~/Books, made if need be): a page or a whole book of pages as a saved
+   * site, a PDF or e-book file as it is. Resolves once it is in the library.
+   */
+  'web:grab'(url: string, folderId: number | null, scope: 'site' | 'page'): GrabbedBook
+  'web:cancelGrab'(): void
+
   'shell:openExternal'(url: string): void
   'window:setFullscreen'(on: boolean): void
   'window:setTitle'(title: string): void
@@ -344,6 +383,9 @@ export interface IpcEvents {
   'library:changed': undefined
   'scan:progress': ScanProgress
   'window:fullscreen': boolean
+  /** Open this book (a file handed to an already running app). */
+  'book:open': number
+  'grab:progress': GrabProgress
 }
 
 export type IpcChannel = keyof IpcHandlers
@@ -355,6 +397,8 @@ export interface Bridge {
     ...args: Parameters<IpcHandlers[K]>
   ): Promise<ReturnType<IpcHandlers[K]>>
   on<K extends IpcEvent>(event: K, listener: (payload: IpcEvents[K]) => void): () => void
+  /** Where a file dropped on the window lives on disk ('' when it is not a real file). */
+  pathForFile(file: File): string
 }
 
 /** URL of a book's content under the `book://` protocol. */

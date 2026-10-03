@@ -1,5 +1,6 @@
-import { mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { BrowserWindow, Menu, app, nativeTheme, screen, session } from 'electron'
 import type { IpcEvent, IpcEvents } from '@shared/types'
 import icon from '../../resources/icon.png?asset'
@@ -134,13 +135,41 @@ function createWindow(): void {
   void window.loadURL(APP_URL)
 }
 
+/**
+ * The file or folder named on a command line, if any: `bookviewer book.epub`.
+ * (The rest of argv is Electron's own: switches, and the app's directory.)
+ */
+function pathArgument(argv: string[], cwd: string): string | null {
+  for (const arg of argv.slice(1)) {
+    if (arg.startsWith('-')) continue
+    let path: string
+    try {
+      // (file managers hand over file:// URLs, percent-encoded)
+      path = arg.startsWith('file://') ? fileURLToPath(arg) : resolve(cwd, arg)
+    } catch {
+      continue
+    }
+    if (path === resolve(app.getAppPath())) continue
+    if (existsSync(path)) return path
+  }
+  return null
+}
+
+/** The book named when this run was started; the UI asks for it once it is up. */
+let launchBook: Promise<number | null> = Promise.resolve(null)
+
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) app.quit()
 else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv, cwd) => {
     if (!mainWindow) return
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.focus()
+    const path = pathArgument(argv, cwd)
+    if (path)
+      void library?.openPath(path).then(id => {
+        if (id != null) send('book:open', id)
+      })
   })
 
   void app.whenReady().then(async () => {
@@ -167,6 +196,12 @@ else {
       store,
       library,
       coversDir,
+      notify: send,
+      takeLaunchBook: () => {
+        const book = launchBook
+        launchBook = Promise.resolve(null)
+        return book
+      },
       isTrusted: event => {
         const frame = event.senderFrame
         return (
@@ -178,6 +213,9 @@ else {
         )
       },
     })
+
+    const path = pathArgument(process.argv, process.cwd())
+    if (path) launchBook = library.openPath(path).catch(() => null)
 
     createWindow()
     await library.start()

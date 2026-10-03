@@ -1,8 +1,8 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type { Bridge } from '@shared/types'
 
 const CHANNEL = /^[a-z]+:[A-Za-z]+$/
-const EVENTS = new Set(['library:changed', 'scan:progress', 'window:fullscreen'])
+const EVENTS = new Set(['library:changed', 'scan:progress', 'window:fullscreen', 'book:open', 'grab:progress'])
 
 const bridge: Bridge = {
   invoke(channel, ...args) {
@@ -15,6 +15,13 @@ const bridge: Bridge = {
     ipcRenderer.on(event, wrapped)
     return () => {
       ipcRenderer.removeListener(event, wrapped)
+    }
+  },
+  pathForFile(file) {
+    try {
+      return webUtils.getPathForFile(file)
+    } catch {
+      return ''
     }
   },
 }

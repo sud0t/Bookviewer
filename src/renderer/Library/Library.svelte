@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Book, Folder, Settings } from '@shared/types'
+  import { EBOOK_EXTENSIONS, type Book, type Folder, type GrabProgress, type Settings } from '@shared/types'
   import appIcon from '../../../build/icon.svg'
   import Dialog from '../lib/Dialog.svelte'
   import Icon from '../lib/Icon.svelte'
@@ -104,6 +104,10 @@
     return folder.path.split('/').filter(Boolean).pop() ?? folder.path
   }
 
+  /** A book opened on its own from outside the library sits in the list as a "folder" of one file. */
+  const isLooseFile = (folder: Folder): boolean =>
+    (folder.path.split('.').pop()?.toLowerCase() ?? '') in EBOOK_EXTENSIONS
+
   const isActive = (candidate: LibraryFilter): boolean =>
     !catalogsOpen && JSON.stringify(candidate) === JSON.stringify(filter)
 
@@ -123,6 +127,75 @@
     if (added.length) {
       await refreshLibrary()
       filter = { kind: 'all' }
+    }
+  }
+
+  /* ---------- adding a book from a web address ---------- */
+
+  let urlOpen = $state(false)
+  let urlValue = $state('')
+  /** What the reader picked; until they do, it goes by the shape of the address. */
+  let urlScopeChoice = $state<'site' | 'page' | null>(null)
+  let urlFolder = $state<number | null>(null)
+  let grabbing = $state(false)
+  let grabError = $state('')
+  let grabProgress = $state<GrabProgress | null>(null)
+
+  /** Folders a download can go into (not a book that is in the library on its own). */
+  const saveFolders = $derived(app.folders.filter(folder => !folder.missing && !isLooseFile(folder)))
+  const urlParsed = $derived.by(() => {
+    const text = urlValue.trim()
+    if (!text) return null
+    try {
+      return new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : 'https://' + text)
+    } catch {
+      return null
+    }
+  })
+  const urlIsFile = $derived(!!urlParsed && /\.(pdf|epub|mobi|azw3?|fb2|fbz|cbz)$/i.test(urlParsed.pathname))
+  /** An address that ends in a folder is a book's front page; one that names a page is that page. */
+  const urlScope = $derived(
+    urlScopeChoice ?? (!urlParsed || /(\/|\/index\.x?html?)$/i.test(urlParsed.pathname) ? 'site' : 'page'),
+  )
+  // (a block body: what a listener returns is sent back over the bridge, and reactive state cannot be)
+  ipc.on('grab:progress', progress => {
+    grabProgress = progress
+  })
+
+  function openUrlDialog() {
+    urlValue = ''
+    urlScopeChoice = null
+    grabError = ''
+    grabProgress = null
+    urlFolder =
+      saveFolders.find(folder => folder.id === app.settings.downloadFolderId)?.id ?? saveFolders[0]?.id ?? null
+    urlOpen = true
+  }
+
+  function closeUrlDialog() {
+    if (grabbing) void ipc.invoke('web:cancelGrab')
+    urlOpen = false
+  }
+
+  async function grab() {
+    if (!urlParsed || grabbing) return
+    grabbing = true
+    grabError = ''
+    grabProgress = null
+    try {
+      const saved = await ipc.invoke('web:grab', urlParsed.href, urlFolder, urlScope)
+      await refreshLibrary()
+      urlOpen = false
+      const what = saved.pages > 1 ? ` (${saved.pages} pages)` : ''
+      toast(`Added “${saved.title}”${what} to the library`, {
+        action: saved.bookId != null ? { label: 'Open', run: () => openBook(saved.bookId!) } : undefined,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      // (cancelling closes the dialog; there is nobody to tell)
+      if (message !== 'Cancelled') grabError = message
+    } finally {
+      grabbing = false
     }
   }
 
@@ -151,7 +224,7 @@
     menu = {
       book,
       x: Math.min(box ? box.left : event.clientX, innerWidth - 230),
-      y: Math.min(box ? box.bottom + 4 : event.clientY, innerHeight - 190),
+      y: Math.min(box ? box.bottom + 4 : event.clientY, innerHeight - 230),
     }
     event.stopPropagation()
   }
@@ -212,6 +285,58 @@
     })
   }
 
+  /** Takes one book out of the list. Its file, and what was noted in it, stay. */
+  async function removeBook(book: Book) {
+    menu = null
+    const { id, title } = book
+    await ipc.invoke('books:setHidden', id, true)
+    await refreshLibrary()
+    toast(`Removed “${title}” from the library. The file is still on disk.`, {
+      action: {
+        label: 'Undo',
+        undo: true,
+        run: () => void ipc.invoke('books:setHidden', id, false).then(refreshLibrary),
+      },
+    })
+  }
+
+  async function restoreRemoved() {
+    const count = app.hiddenBooks
+    settingsOpen = false
+    await ipc.invoke('books:restoreHidden')
+    await refreshLibrary()
+    toast(count === 1 ? 'Put 1 removed book back' : `Put ${count} removed books back`)
+  }
+
+  /** Arrow keys move between the books of the grid or list; true when one did. */
+  function moveBetweenCards(event: KeyboardEvent): boolean {
+    if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return false
+    const card = (event.target as HTMLElement | null)?.closest?.('.card')
+    const container = card?.parentElement
+    if (!card || !container?.matches('.grid, .rows')) return false
+    const cards = [...container.querySelectorAll<HTMLElement>(':scope > .card')]
+    const at = cards.indexOf(card as HTMLElement)
+    const isList = container.matches('.rows')
+    const columns = isList ? 1 : cards.filter(c => c.offsetTop === cards[0].offsetTop).length
+    const last = cards.length - 1
+    let next = at
+    if (event.key === 'ArrowRight' && !isList) next = at + 1
+    else if (event.key === 'ArrowLeft' && !isList) next = at - 1
+    else if (event.key === 'ArrowUp') next = at - columns
+    else if (event.key === 'ArrowDown')
+      // from the row above a short last row, go to its end rather than nowhere
+      next = at + columns > last && Math.floor(at / columns) < Math.floor(last / columns) ? last : at + columns
+    else if (event.key === 'Home') next = 0
+    else if (event.key === 'End') next = last
+    else return false
+    if (next === at || next < 0 || next > last) return false
+    event.preventDefault()
+    const target = cards[next].querySelector<HTMLElement>('.open')
+    target?.focus({ preventScroll: true })
+    cards[next].scrollIntoView({ block: 'nearest' })
+    return true
+  }
+
   function size(bytes: number): string {
     if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`
@@ -261,6 +386,7 @@
       return
     }
     if (catalogsOpen) return
+    if (moveBetweenCards(event)) return
     const typing = (event.target as HTMLElement | null)?.closest?.('input, textarea, select')
     const find = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f'
     if (find || (event.key === '/' && !typing)) {
@@ -271,6 +397,16 @@
       shortcutsOpen = true
     }
   }
+
+  /** Languages offered for looking words up and translating (the services' own codes). */
+  const LANGUAGES: [string, string][] = [
+    ['ar', 'Arabic'], ['zh', 'Chinese'], ['cs', 'Czech'], ['da', 'Danish'], ['nl', 'Dutch'],
+    ['en', 'English'], ['fi', 'Finnish'], ['fr', 'French'], ['de', 'German'], ['el', 'Greek'],
+    ['he', 'Hebrew'], ['hi', 'Hindi'], ['hu', 'Hungarian'], ['id', 'Indonesian'], ['it', 'Italian'],
+    ['ja', 'Japanese'], ['ko', 'Korean'], ['no', 'Norwegian'], ['pl', 'Polish'], ['pt', 'Portuguese'],
+    ['ro', 'Romanian'], ['ru', 'Russian'], ['es', 'Spanish'], ['sv', 'Swedish'], ['tr', 'Turkish'],
+    ['uk', 'Ukrainian'], ['vi', 'Vietnamese'],
+  ]
 
   const SORTS: { value: Settings['librarySort']; label: string }[] = [
     { value: 'recent', label: 'Recently read' },
@@ -347,7 +483,7 @@
             title={folder.missing ? `${folder.path} (not found)` : folder.path}
             onclick={() => show({ kind: 'folder', id: folder.id })}
           >
-            <Icon name="folder" size={16} />
+            <Icon name={isLooseFile(folder) ? 'file' : 'folder'} size={16} />
             <span class="ellipsis" class:missing={folder.missing}>{folderLabels.get(folder.id)}</span>
             <span class="count" class:warn={folder.missing}>
               {folder.missing ? 'not found' : app.scanning[folder.id] ? '…' : folder.bookCount}
@@ -366,6 +502,14 @@
       <button class="item add" title="Add folder…" onclick={addFolder}>
         <Icon name="folder-plus" size={16} />
         <span>Add folder…</span>
+      </button>
+      <button
+        class="item add"
+        title="Save a book or page from a web address, or download a PDF or e-book from one"
+        onclick={openUrlDialog}
+      >
+        <Icon name="download" size={16} />
+        <span>Add from web address…</span>
       </button>
 
       <h3>Online</h3>
@@ -574,6 +718,9 @@
     <button role="menuitem" onclick={() => ipc.invoke('books:showInFolder', book.id)}>
       <Icon name="folder" size={15} /> Show in file manager
     </button>
+    <button role="menuitem" onclick={() => removeBook(book)}>
+      <Icon name="x" size={15} /> Remove from library
+    </button>
   </div>
 {/if}
 
@@ -581,6 +728,38 @@
   <div class="settings" role="dialog" aria-label="Settings" use:popoverFocus>
     <div class="label">Theme</div>
     <ThemePicker />
+    <hr />
+    <div class="label">Looking up words</div>
+    <label class="lang" title="Used for the dictionary and Wikipedia when a book does not say what language it is in">
+      <span>Books are in</span>
+      <select
+        class="input"
+        value={app.settings.lookupLanguage}
+        onchange={event => updateSettings({ lookupLanguage: event.currentTarget.value })}
+      >
+        {#each LANGUAGES as [code, name] (code)}<option value={code}>{name}</option>{/each}
+      </select>
+    </label>
+    <label class="lang" title="The language “Translate” turns a selection into">
+      <span>Translate into</span>
+      <select
+        class="input"
+        value={app.settings.translateTarget}
+        onchange={event => updateSettings({ translateTarget: event.currentTarget.value })}
+      >
+        {#each LANGUAGES as [code, name] (code)}<option value={code}>{name}</option>{/each}
+      </select>
+    </label>
+    <p class="muted hint">A book that states its own language is looked up in that one.</p>
+    <hr />
+    <label class="check" title="Sends the title and author of a book without a cover to openlibrary.org">
+      <input
+        type="checkbox"
+        checked={app.settings.onlineCovers}
+        onchange={event => updateSettings({ onlineCovers: event.currentTarget.checked })}
+      />
+      <span>Find missing covers online (Open Library)</span>
+    </label>
     <hr />
     <button
       class="row"
@@ -591,6 +770,12 @@
     >
       <Icon name="keyboard" size={15} /> <span>Keyboard shortcuts</span> <kbd>?</kbd>
     </button>
+    {#if app.hiddenBooks}
+      <button class="row" onclick={restoreRemoved}>
+        <Icon name="undo" size={15} />
+        <span>Put back removed {app.hiddenBooks === 1 ? 'book' : `books (${app.hiddenBooks})`}</span>
+      </button>
+    {/if}
     <p class="muted about">BookViewer {version}</p>
   </div>
 {/if}
@@ -638,6 +823,87 @@
         }}
       >
         {book.progress > 0 && book.progress < 0.99 ? 'Continue reading' : 'Open'}
+      </button>
+    {/snippet}
+  </Dialog>
+{/if}
+
+{#if urlOpen}
+  <Dialog title="Add from a web address" width={540} onclose={closeUrlDialog}>
+    <form
+      id="grab-form"
+      class="grab"
+      onsubmit={event => {
+        event.preventDefault()
+        void grab()
+      }}
+    >
+      <label class="grab-field">
+        <span>Address of the book, page, PDF or e-book</span>
+        <input
+          class="input"
+          type="text"
+          inputmode="url"
+          placeholder="https://automatetheboringstuff.com/"
+          autocomplete="off"
+          spellcheck="false"
+          data-autofocus
+          disabled={grabbing}
+          bind:value={urlValue}
+        />
+      </label>
+      {#if !urlIsFile}
+        <fieldset class="grab-scope" disabled={grabbing}>
+          <legend>What to save</legend>
+          <label>
+            <input type="radio" name="grab-scope" checked={urlScope === 'site'} onchange={() => (urlScopeChoice = 'site')} />
+            <span>
+              <strong>The whole book</strong>
+              <small class="muted">This page and the pages it links to on the same site, as chapters</small>
+            </span>
+          </label>
+          <label>
+            <input type="radio" name="grab-scope" checked={urlScope === 'page'} onchange={() => (urlScopeChoice = 'page')} />
+            <span>
+              <strong>Just this page</strong>
+              <small class="muted">One article or chapter</small>
+            </span>
+          </label>
+        </fieldset>
+      {/if}
+      {#if saveFolders.length > 1}
+        <label class="grab-field">
+          <span>Save in</span>
+          <select class="input" disabled={grabbing} bind:value={urlFolder}>
+            {#each saveFolders as folder (folder.id)}
+              <option value={folder.id}>{tidyPath(folder.path)}</option>
+            {/each}
+          </select>
+        </label>
+      {:else}
+        <p class="muted grab-where">
+          It is saved in {saveFolders[0] ? tidyPath(saveFolders[0].path) : '~/Books (which becomes a library folder)'}, to read offline.
+        </p>
+      {/if}
+      {#if grabbing}
+        <div class="grab-progress" role="status">
+          <progress
+            max={grabProgress?.total || 1}
+            value={grabProgress && grabProgress.total > 1 ? grabProgress.done : undefined}
+          ></progress>
+          <span class="muted ellipsis">
+            {grabProgress && grabProgress.total > 1
+              ? `Saving ${Math.min(grabProgress.done, grabProgress.total)} of ${grabProgress.total}: ${grabProgress.label}`
+              : 'Connecting…'}
+          </span>
+        </div>
+      {/if}
+      {#if grabError}<p class="warn" role="alert">{grabError}</p>{/if}
+    </form>
+    {#snippet footer()}
+      <button class="btn" type="button" onclick={closeUrlDialog}>Cancel</button>
+      <button class="btn primary" type="submit" form="grab-form" disabled={!urlParsed || grabbing}>
+        {grabbing ? 'Saving…' : urlIsFile ? 'Download' : 'Add to library'}
       </button>
     {/snippet}
   </Dialog>
@@ -719,6 +985,86 @@
   }
   .settings .row span {
     flex: 1;
+  }
+  .grab {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .grab-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-weight: 600;
+  }
+  .grab-field .input {
+    width: 100%;
+    font-weight: 400;
+  }
+  .grab-scope {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .grab-scope legend {
+    padding: 0;
+    margin-bottom: 6px;
+    font-weight: 600;
+  }
+  .grab-scope label {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .grab-scope input {
+    margin-top: 4px;
+    accent-color: var(--accent);
+  }
+  .grab-scope span {
+    display: flex;
+    flex-direction: column;
+  }
+  .grab-scope strong {
+    font-weight: 500;
+  }
+  .grab-where {
+    margin: 0;
+  }
+  .grab-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .grab-progress progress {
+    width: 100%;
+    height: 6px;
+    accent-color: var(--accent);
+  }
+  .grab .warn {
+    margin: 0;
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+  }
+  .lang {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 6px;
+  }
+  .lang select {
+    width: 150px;
+  }
+  .hint {
+    margin: 8px 0 0;
+    font-size: 12px;
   }
   .about {
     margin-top: 8px;

@@ -56,6 +56,9 @@ declare module 'foliate-js/types' {
     splitTOCHref?(href: string): unknown[] | Promise<unknown[]>
     getTOCFragment?(doc: Document, id: unknown): Node | null
     getCover?(): Blob | null | Promise<Blob | null>
+    /** (EPUB) Reads a file of the book by its path inside the archive. */
+    loadText?(name: string): Promise<string> | null
+    loadBlob?(name: string, type?: string): Promise<Blob> | null
     destroy?(): void
   }
 

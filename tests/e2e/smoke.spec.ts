@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test'
@@ -92,6 +92,8 @@ test.describe.serial('reading', () => {
     await page.mouse.move(640, 400)
     await page.mouse.wheel(0, 500)
     await expect.poll(loadedText).toContain('Paragraph 1 about the storm')
+    // nothing a book carries may run: its pages share the app's origin
+    expect(await page.evaluate(() => (window as Window & { pwned?: string }).pwned)).toBeUndefined()
     await expect(page.locator('.toolbar .title')).toContainText('Arrival')
   })
 
@@ -204,6 +206,41 @@ test.describe.serial('reading', () => {
     await expect(page.locator('.panel .hit')).toHaveCount(1)
     await page.locator('.panel .hit').click()
     await expect(page.locator('.toolbar .title')).toContainText('Morning')
+    // the result the reader is on is filled in, not just outlined
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const deep = (root: Document | ShadowRoot): number =>
+            root.querySelectorAll('g[fill-opacity]').length +
+            [...root.querySelectorAll('*')].reduce(
+              (n, el) =>
+                n +
+                (el.shadowRoot ? deep(el.shadowRoot) : 0) +
+                (el instanceof HTMLIFrameElement && el.contentDocument ? deep(el.contentDocument) : 0),
+              0,
+            )
+          return deep(document)
+        }),
+      )
+      .toBe(1)
+  })
+
+  test('right-click picks the word under the pointer', async () => {
+    await expect.poll(() => locate('zebrafish')).not.toBeNull()
+    const at = (await locate('zebrafish'))!
+    await page.mouse.click(at.x, at.y, { button: 'right' })
+    await expect(page.locator('.selection-menu')).toBeVisible()
+    await page.locator('.selection-menu').getByRole('button', { name: 'Define' }).click()
+    await expect(page.locator('.lookup')).toContainText('zebrafish')
+    await page.keyboard.press('Escape')
+  })
+
+  test('F6 moves between the book and the toolbar', async () => {
+    const inToolbar = () => page.evaluate(() => !!document.activeElement?.closest('.toolbar'))
+    await page.keyboard.press('F6')
+    expect(await inToolbar()).toBe(true)
+    await page.keyboard.press('F6')
+    expect(await inToolbar()).toBe(false)
     await backToLibrary()
   })
 
@@ -373,6 +410,8 @@ test.describe.serial('coming back to a book', () => {
     await openBook('The Test Lighthouse')
     await expect(page.getByRole('button', { name: 'Next page' })).toBeVisible()
     await page.waitForTimeout(1000)
+    // (the paginated renderer's frames allow scripts; the content policy must still stop a book's)
+    expect(await page.evaluate(() => (window as Window & { pwned?: string }).pwned)).toBeUndefined()
     const before = await progressOf('The Test Lighthouse')
     await page.keyboard.press('ArrowRight')
     // no pause: the turn is still being animated, and is only reported at its end
@@ -382,5 +421,58 @@ test.describe.serial('coming back to a book', () => {
     await page.evaluate(() => window.bridge.invoke('settings:set', { flow: 'scrolled' }))
     await page.reload()
     await expect(page.locator('.card')).toHaveCount(3)
+  })
+})
+
+test.describe.serial('the library', () => {
+  test('moves between books with the arrow keys', async () => {
+    const focused = () => page.evaluate(() => document.activeElement?.closest('.card')?.getAttribute('title'))
+    const titles = await page.locator('.grid .card').evaluateAll(cards => cards.map(c => c.getAttribute('title')))
+    await page.locator('.grid .card .open').first().focus()
+    await page.keyboard.press('ArrowRight')
+    expect(await focused()).toBe(titles[1])
+    await page.keyboard.press('End')
+    expect(await focused()).toBe(titles[2])
+    await page.keyboard.press('ArrowLeft')
+    expect(await focused()).toBe(titles[1])
+  })
+
+  test('removes one book, and puts it back', async () => {
+    const card = page.locator('.card[title="The Saved Site"]')
+    await card.hover()
+    await card.getByRole('button', { name: /More actions/ }).click()
+    await page.getByRole('menuitem', { name: 'Remove from library' }).click()
+    await expect(page.locator('.card')).toHaveCount(2)
+    // a rescan does not bring it back
+    await page.evaluate(() => window.bridge.invoke('folders:rescan'))
+    await expect(page.locator('.card')).toHaveCount(2)
+    await page.locator('.toast').getByRole('button', { name: 'Undo' }).click()
+    await expect(page.locator('.card')).toHaveCount(3)
+
+    await page.evaluate(() =>
+      window.bridge.invoke('books:list').then(books =>
+        window.bridge.invoke('books:setHidden', books.find(b => b.title === 'The Saved Site')!.id, true),
+      ),
+    )
+    await page.reload()
+    await expect(page.locator('.card')).toHaveCount(2)
+    await page.getByRole('button', { name: 'Settings' }).click()
+    await page.getByRole('button', { name: /Put back removed book/ }).click()
+    await expect(page.locator('.card')).toHaveCount(3)
+  })
+
+  test('opens a book file handed to the app from outside the library', async () => {
+    const source = await page.evaluate(() =>
+      window.bridge.invoke('books:list').then(books => books.find(b => b.format === 'epub')!.path),
+    )
+    const loose = join(scratch, 'elsewhere', 'loose.epub')
+    await mkdir(join(scratch, 'elsewhere'))
+    await copyFile(source, loose)
+    // (what a drop on the window, or `bookviewer loose.epub`, ends up calling)
+    const id = await page.evaluate(path => window.bridge.invoke('library:openPaths', [path]), loose)
+    expect(id).not.toBeNull()
+    await expect(page.locator('.card')).toHaveCount(4)
+    const folders = await page.evaluate(() => window.bridge.invoke('folders:list'))
+    expect(folders.map(f => f.path)).toContain(loose)
   })
 })

@@ -31,4 +31,5 @@ export const ipc: Bridge = {
   invoke: (channel, ...args) =>
     window.bridge.invoke(channel, ...(args.map(plain) as typeof args)).catch(rethrow),
   on: (event, listener) => window.bridge.on(event, listener),
+  pathForFile: file => window.bridge.pathForFile(file),
 }

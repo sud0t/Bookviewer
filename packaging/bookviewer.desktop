@@ -2,9 +2,10 @@
 Type=Application
 Name=BookViewer
 Comment=Read EPUB, PDF and saved HTML books
-Exec=bookviewer %U
+Exec=bookviewer %f
 Icon=bookviewer
 Terminal=false
 Categories=Office;Viewer;Literature;
 Keywords=ebook;epub;pdf;reader;book;library;
+MimeType=application/epub+zip;application/pdf;application/x-mobipocket-ebook;application/vnd.amazon.mobi8-ebook;application/x-fictionbook+xml;application/vnd.comicbook+zip;inode/directory;
 StartupWMClass=bookviewer

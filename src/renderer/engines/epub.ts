@@ -6,6 +6,7 @@
  * the renderer for scrolled flow is our continuous scroller, and locations
  * and annotation anchors go through a pluggable `Locator`.
  */
+import { selectForContextMenu } from './context'
 import type { Annotation, Selector, Settings } from '@shared/types'
 import { Overlayer } from 'foliate-js/overlayer.js'
 import { SectionProgress, TOCProgress, type SectionProgressInfo } from 'foliate-js/progress.js'
@@ -21,6 +22,7 @@ import {
   applyFontSize,
   classifyImages,
   contentCSS,
+  dropDarkSchemeRules,
   preInvert,
 } from './appearance'
 import './scroller'
@@ -139,6 +141,13 @@ const DRAW = {
 
 const annotationKey = (id: number) => `a:${id}`
 const SEARCH_KEY = 's:'
+/** The search result the reader is on: filled in, where the others are outlined. */
+const drawCurrentHit: typeof Overlayer.outline = (rects, options = {}) => {
+  const g = Overlayer.outline(rects, options)
+  g.setAttribute('fill', String(options.color ?? 'orange'))
+  g.setAttribute('fill-opacity', '0.35')
+  return g
+}
 const SPEECH_KEY = 'tts'
 
 function toViewport(doc: Document, rect: DOMRect): ViewportRect {
@@ -308,6 +317,7 @@ export class ReflowEngine implements Engine {
   private resolved = new Map<number, { index: number; anchor: RangeAnchor } | null>()
   private searchHits = new Map<number, string[]>()
   private searchRun = 0
+  private currentHit: string | null = null
   private speechRange: { index: number; range: Range } | null = null
   private last: { index: number; range: Range | null; location: string; fraction: number } | null =
     null
@@ -483,6 +493,7 @@ export class ReflowEngine implements Engine {
 
   private styleDocument(doc: Document): void {
     if (!doc?.body) return
+    dropDarkSchemeRules(doc)
     const inverted = PALETTES[this.appearance.theme].invert
     if (this.reflowable) applyFontSize(doc, this.appearance.settings.fontSize)
     if (inverted) classifyImages(doc)
@@ -616,6 +627,11 @@ export class ReflowEngine implements Engine {
     })
     doc.addEventListener('selectionchange', () => {
       if (doc.getSelection()?.isCollapsed) this.events.selection(null)
+    })
+    // Right-click acts on the word under the pointer (or the selection clicked on).
+    doc.addEventListener('contextmenu', event => {
+      event.preventDefault()
+      if (selectForContextMenu(doc, event)) reportSelection()
     })
     doc.addEventListener('keydown', event => this.events.keydown(event))
     // Dragging links and pictures out of the page only gets in the way of selecting.
@@ -942,7 +958,7 @@ export class ReflowEngine implements Engine {
     try {
       const range = resolved.anchor(doc)
       if (range instanceof (doc.defaultView as typeof globalThis).Range)
-        overlayer.add(SEARCH_KEY + target, range, Overlayer.outline, {
+        overlayer.add(SEARCH_KEY + target, range, target === this.currentHit ? drawCurrentHit : Overlayer.outline, {
           color: PALETTES[this.appearance.theme].invert ? '#ffb347' : '#e8590c',
           width: 2,
           radius: 2,
@@ -998,8 +1014,21 @@ export class ReflowEngine implements Engine {
     }
   }
 
+  markSearchHit(target: string | null): void {
+    const changed = [this.currentHit, target]
+    this.currentHit = target
+    for (const hit of changed) {
+      const index = hit ? this.resolve(hit)?.index : undefined
+      const content = this.renderer?.getContents().find(c => c.index === index)
+      if (!hit || !content?.overlayer) continue
+      content.overlayer.remove(SEARCH_KEY + hit)
+      this.drawSearchHit(hit, content.doc, content.overlayer)
+    }
+  }
+
   clearSearch(): void {
     this.searchRun++
+    this.currentHit = null
     for (const { index, overlayer } of this.renderer?.getContents() ?? []) {
       if (index == null || !overlayer) continue
       for (const target of this.searchHits.get(index) ?? []) overlayer.remove(SEARCH_KEY + target)

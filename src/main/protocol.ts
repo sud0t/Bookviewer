@@ -184,7 +184,12 @@ export function handleAppProtocol(rendererDir: string): void {
   protocol.handle('app', async request => {
     const url = new URL(request.url)
     if (url.hostname !== 'bundle') return text(404, 'Not found')
-    let relative = decodeURIComponent(url.pathname)
+    let relative: string
+    try {
+      relative = decodeURIComponent(url.pathname)
+    } catch {
+      return text(400, 'Bad request')
+    }
     if (relative === '/' || relative === '') relative = '/index.html'
     const path = safeJoin(rendererDir, relative)
     if (!path) return text(403, 'Forbidden')

@@ -2,14 +2,56 @@
   import Library from './Library/Library.svelte'
   import Reader from './Reader/Reader.svelte'
   import Icon from './lib/Icon.svelte'
-  import { app, dismissToast, initApp, runToastAction, theme } from './lib/app.svelte'
+  import { app, dismissToast, initApp, openBook, refreshLibrary, runToastAction, theme, toast } from './lib/app.svelte'
+  import { ipc } from './lib/ipc'
 
   $effect(() => {
     document.documentElement.dataset.theme = theme()
   })
 
   void initApp()
+
+  // A folder (or a book file) dragged in from the file manager.
+  let dropping = $state(false)
+  let dropTimer: ReturnType<typeof setTimeout> | undefined
+  const carriesFiles = (event: DragEvent) => !!event.dataTransfer?.types.includes('Files')
+
+  function onDragover(event: DragEvent) {
+    if (!carriesFiles(event)) return
+    event.preventDefault()
+    event.dataTransfer!.dropEffect = 'copy'
+    dropping = true
+    // (dragover repeats while the pointer is over the window; when it stops, it has left)
+    clearTimeout(dropTimer)
+    dropTimer = setTimeout(() => (dropping = false), 200)
+  }
+
+  async function onDrop(event: DragEvent) {
+    if (!carriesFiles(event)) return
+    event.preventDefault()
+    dropping = false
+    const paths = [...(event.dataTransfer?.files ?? [])].map(file => ipc.pathForFile(file)).filter(Boolean)
+    if (!paths.length) return
+    const before = app.folders.length
+    try {
+      const book = await ipc.invoke('library:openPaths', paths)
+      await refreshLibrary()
+      if (book != null) openBook(book)
+      else if (app.folders.length > before) toast('Added to the library')
+      else toast('Nothing new to add: that is already in the library, or not a book BookViewer reads')
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error), 'error')
+    }
+  }
 </script>
+
+<svelte:window ondragover={onDragover} ondrop={onDrop} />
+
+{#if dropping}
+  <div class="drop" aria-hidden="true">
+    <div><Icon name="folder-plus" size={28} /> Drop a folder or a book to add it to the library</div>
+  </div>
+{/if}
 
 {#if app.ready}
   <!-- The library stays mounted behind the reader so it keeps its scroll position. -->
@@ -43,6 +85,24 @@
   }
   .view[hidden] {
     display: none;
+  }
+  .drop {
+    position: fixed;
+    inset: 8px;
+    z-index: 300;
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+    border: 2px dashed var(--accent);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+  }
+  .drop div {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 17px;
+    font-weight: 600;
   }
   .toast {
     position: fixed;

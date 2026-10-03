@@ -33,6 +33,8 @@ export const app = $state({
   systemDark: darkQuery.matches,
   fullscreen: false,
   toast: null as Toast | null,
+  /** Books taken out of the library list that could be put back. */
+  hiddenBooks: 0,
 })
 
 darkQuery.addEventListener('change', event => (app.systemDark = event.matches))
@@ -46,9 +48,14 @@ export const isDark = (name: ThemeName): boolean =>
   name === 'dark' || name === 'black' || name === 'gray'
 
 export async function refreshLibrary(): Promise<void> {
-  const [folders, books] = await Promise.all([ipc.invoke('folders:list'), ipc.invoke('books:list')])
+  const [folders, books, hidden] = await Promise.all([
+    ipc.invoke('folders:list'),
+    ipc.invoke('books:list'),
+    ipc.invoke('books:hiddenCount'),
+  ])
   app.folders = folders
   app.books = books
+  app.hiddenBooks = hidden
 }
 
 /** Re-reads one book's row after its metadata or progress changed. */
@@ -120,5 +127,11 @@ export async function initApp(): Promise<void> {
   ipc.on('library:changed', () => void refreshLibrary())
   ipc.on('scan:progress', ({ folderId, scanning }) => (app.scanning[folderId] = scanning))
   ipc.on('window:fullscreen', on => (app.fullscreen = on))
+  ipc.on('book:open', id => void refreshLibrary().then(() => openBook(id)))
   app.ready = true
+  const launched = await ipc.invoke('library:launchBook')
+  if (launched != null) {
+    await refreshLibrary()
+    openBook(launched)
+  }
 }

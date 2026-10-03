@@ -6,6 +6,7 @@
 import { bookUrl, type Book, type BookMeta } from '@shared/types'
 import { app, refreshBook } from '../lib/app.svelte'
 import { ipc } from '../lib/ipc'
+import type { FoliateBook } from 'foliate-js/types'
 import { contributors, localizedText, openFoliateBook, fileName } from '../engines/formats'
 
 const COVER_WIDTH = 480
@@ -34,6 +35,79 @@ async function toWebp(source: CoverSource): Promise<Uint8Array | null> {
   }
 }
 
+/** A published book's cover from the web, for a file that brings none. */
+async function onlineCover(title: string, author: string): Promise<Uint8Array | null> {
+  if (!app.settings.onlineCovers || !title) return null
+  const bytes = await ipc.invoke('lookup:cover', title, author).catch(() => null)
+  return bytes ? toWebp(new Blob([bytes as BlobPart])) : null
+}
+
+const PAGE = { width: 600, height: 900 }
+const blobToDataUrl = (blob: Blob): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(blob)
+  })
+
+/**
+ * The last resort for a cover: a picture of the book's first page, the way
+ * a PDF's is made. The page is drawn through an SVG image, which may not
+ * load anything from outside itself, so its pictures and styles are put in.
+ */
+async function firstPage(opened: FoliateBook): Promise<Uint8Array | null> {
+  const section = opened.sections.find(s => s.linear !== 'no' && s.createDocument)
+  const doc = await section?.createDocument?.()
+  if (!section || !doc?.body) return null
+  const resolve = (href: string | null) => (href ? (section.resolveHref?.(href) ?? href) : null)
+  for (const node of doc.body.querySelectorAll('script, iframe, object, embed, video, audio, link, form'))
+    node.remove()
+  let pictures = 0
+  for (const image of doc.body.querySelectorAll('img, image')) {
+    const attribute = image.hasAttribute('src') ? 'src' : image.hasAttribute('href') ? 'href' : 'xlink:href'
+    const path = resolve(image.getAttribute(attribute))
+    const blob = path && pictures < 6 ? await Promise.resolve(opened.loadBlob?.(path)).catch(() => null) : null
+    if (!blob || blob.size > 3_000_000) {
+      image.remove()
+      continue
+    }
+    pictures++
+    image.setAttribute(attribute, await blobToDataUrl(blob))
+    image.removeAttribute('srcset')
+  }
+  let css = ''
+  for (const link of doc.querySelectorAll('link[rel~="stylesheet"]')) {
+    const path = resolve(link.getAttribute('href'))
+    css += (path && (await Promise.resolve(opened.loadText?.(path)).catch(() => ''))) || ''
+  }
+  for (const style of doc.querySelectorAll('style')) css += style.textContent ?? ''
+  // nothing that reaches outside the image, and no dark variants
+  css = css
+    .replace(/@import[^;]*;/g, '')
+    .replace(/@font-face\s*\{[^}]*\}/g, '')
+    .replace(/@media[^{]*prefers-color-scheme[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, '')
+    .replace(/url\([^)]*\)/g, 'none')
+    .replace(/<\/?style/gi, '')
+  const serializer = new XMLSerializer()
+  const content = [...doc.body.childNodes].slice(0, 60).map(node => serializer.serializeToString(node)).join('')
+  if (!doc.body.textContent?.trim() && !pictures) return null
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${PAGE.width}" height="${PAGE.height}">` +
+    `<foreignObject width="100%" height="100%">` +
+    `<div xmlns="http://www.w3.org/1999/xhtml" style="width:${PAGE.width}px;height:${PAGE.height}px;` +
+    `box-sizing:border-box;overflow:hidden;padding:44px 40px;background:#fff;color:#1f1d1a;` +
+    `font:19px/1.45 Georgia,'Liberation Serif',serif">` +
+    `<style>${css.replace(/&/g, '&amp;').replace(/</g, '&lt;')} img,svg{max-width:100%;height:auto}</style>` +
+    `${content}</div></foreignObject></svg>`
+  const image = new Image()
+  image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)
+  await image.decode()
+  const canvas = new OffscreenCanvas(PAGE.width, PAGE.height)
+  canvas.getContext('2d')!.drawImage(image, 0, 0)
+  return toWebp(canvas)
+}
+
 interface Extracted {
   meta: BookMeta
   cover: Uint8Array | null
@@ -45,19 +119,24 @@ async function fromFoliate(book: Book): Promise<Extracted> {
     const metadata = opened.metadata ?? {}
     const language = Array.isArray(metadata.language) ? metadata.language[0] : metadata.language
     const blob = await Promise.resolve(opened.getCover?.()).catch(() => null)
+    const author = contributors(metadata.author)
+    const cover =
+      (blob && (await toWebp(blob))) ||
+      (book.format === 'cbz' ? null : await onlineCover(localizedText(metadata.title), author)) ||
+      (await firstPage(opened).catch(() => null))
     // A comic book's "title" is just its file name; keep the tidier one we have.
     const title = book.format === 'cbz' ? '' : localizedText(metadata.title)
     return {
       meta: {
         title,
-        author: contributors(metadata.author),
+        author,
         description: stripHtml(metadata.description ?? ''),
         language: language ?? '',
         publisher: contributors(metadata.publisher),
         published: metadata.published ?? '',
         identifier: metadata.identifier ?? '',
       },
-      cover: blob ? await toWebp(blob) : null,
+      cover,
     }
   } finally {
     opened.destroy?.()

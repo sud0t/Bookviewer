@@ -4,9 +4,10 @@
  * speech-dispatcher is set up, so these are the dependable ones.)
  */
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import type { TtsVoice } from '@shared/types'
 
 const MAX_TEXT = 8000
@@ -120,9 +121,12 @@ export async function speak(
   const rate = Math.min(3, Math.max(0.3, Number(opts.rate) || 1))
 
   if (engine === 'piper') {
-    const model = opts.voice || piper.model
-    if (!model) throw new Error('No Piper voice model is configured')
-    const out = join(tmpdir(), `bookviewer-tts-${process.pid}-${Date.now()}.wav`)
+    const named = opts.voice || piper.model
+    if (!named) throw new Error('No Piper voice model is configured')
+    // A model is a file: as a full path it cannot be read as one of Piper's options.
+    const model = resolve(named)
+    // (an unguessable name: /tmp is shared with every other program)
+    const out = join(tmpdir(), `bookviewer-tts-${randomUUID()}.wav`)
     try {
       await run(
         piper.path || 'piper',

@@ -171,3 +171,26 @@ describe('settings', () => {
     expect(store.getBook(book.id)!.progress).toBe(0)
   })
 })
+
+describe('removing a single book', () => {
+  it('keeps a removed book out of the list across scans, with its notes, until it is put back', () => {
+    const folder = store.addFolder('/lib')
+    store.syncFolder(folder, [file('/lib/a.epub'), file('/lib/b.epub')])
+    const book = store.getBookByPath('/lib/a.epub')!
+    store.addAnnotation({ bookId: book.id, selector, text: 'Hello', note: '', color: 'yellow', style: 'highlight', label: '', position: 0.1 })
+
+    store.setHidden(book.id, true)
+    expect(store.listBooks().map(b => b.path)).toEqual(['/lib/b.epub'])
+    expect(store.listFolders()[0].bookCount).toBe(1)
+    expect(store.countHidden()).toBe(1)
+
+    // the next scan finds the file again: it must not come back by itself
+    expect(store.syncFolder(folder, [file('/lib/a.epub', 200, 2), file('/lib/b.epub')])).toEqual({ added: 0, removed: 0 })
+    expect(store.listBooks().map(b => b.path)).toEqual(['/lib/b.epub'])
+
+    store.restoreHidden()
+    expect(store.listBooks().map(b => b.path).sort()).toEqual(['/lib/a.epub', '/lib/b.epub'])
+    expect(store.listAnnotations(book.id)).toHaveLength(1)
+    expect(store.countHidden()).toBe(0)
+  })
+})

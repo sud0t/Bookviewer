@@ -129,3 +129,47 @@ describe('download names', () => {
     expect(downloadExtension('application/pdf', null, '/files/100%.pdf')).toBe('.pdf')
   })
 })
+
+describe('opening a path from outside', () => {
+  it('finds a book that a library folder already covers', async () => {
+    const path = join(dir, 'books')
+    await mkdir(path)
+    const folder = library.addFolder(path)!
+    await library.scan(folder.id)
+    await writeFile(join(path, 'new.epub'), 'x')
+
+    const id = await library.openPath(join(path, 'new.epub'))
+    expect(store.getBook(id!)?.path).toBe(join(path, 'new.epub'))
+    expect(store.listFolders()).toHaveLength(1)
+  })
+
+  it('adds a loose book on its own, not the directory it is in', async () => {
+    await mkdir(join(dir, 'downloads'))
+    await writeFile(join(dir, 'downloads', 'loose.pdf'), 'x')
+    await writeFile(join(dir, 'downloads', 'other.pdf'), 'x')
+
+    const id = await library.openPath(join(dir, 'downloads', 'loose.pdf'))
+    expect(id).not.toBeNull()
+    expect(store.listBooks().map(b => b.path)).toEqual([join(dir, 'downloads', 'loose.pdf')])
+    // opening it again is the same book
+    expect(await library.openPath(join(dir, 'downloads', 'loose.pdf'))).toBe(id)
+
+    // adding the directory later takes the book (and its row) in
+    library.addFolder(join(dir, 'downloads'))
+    await library.rescan()
+    expect(store.listFolders()).toHaveLength(1)
+    expect(store.listBooks()).toHaveLength(2)
+    expect(store.getBookByPath(join(dir, 'downloads', 'loose.pdf'))?.id).toBe(id)
+  })
+
+  it('brings back a book that was removed from the list, and ignores what is not a book', async () => {
+    await writeFile(join(dir, 'a.epub'), 'x')
+    await writeFile(join(dir, 'notes.txt'), 'x')
+    const id = (await library.openPath(join(dir, 'a.epub')))!
+    store.setHidden(id, true)
+    expect(await library.openPath(join(dir, 'a.epub'))).toBe(id)
+    expect(store.listBooks()).toHaveLength(1)
+    expect(await library.openPath(join(dir, 'notes.txt'))).toBeNull()
+    expect(await library.openPath(join(dir, 'nowhere.epub'))).toBeNull()
+  })
+})

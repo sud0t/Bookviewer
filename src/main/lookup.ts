@@ -155,3 +155,50 @@ export async function dictionary(query: string, language: string): Promise<Dicti
   if (fallback.length) return fallback
   return free
 }
+
+/** A title as catalogues compare them: no case, punctuation, subtitle or edition. */
+export const titleKey = (title: string): string =>
+  title
+    .toLowerCase()
+    .replace(/[(\[][^)\]]*[)\]]/g, ' ')
+    .replace(/[:;,–—-]\s.*$/, match => (/edition|\bed\b|\d(st|nd|rd|th)/.test(match) ? ' ' : match))
+    .replace(/\b(\d+(st|nd|rd|th)|first|second|third|fourth|fifth|sixth|revised|new)\s+(edition|ed)\b/g, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+
+const MAX_COVER_DOWNLOAD = 6 * 1024 * 1024
+
+/**
+ * The cover of a published book, from Open Library, for files that carry no
+ * cover of their own. Only a book whose title matches is accepted: a wrong
+ * cover is worse than none.
+ */
+export async function bookCover(title: string, author: string): Promise<Uint8Array | null> {
+  const wanted = titleKey(title)
+  if (wanted.length < 4) return null
+  // (the first author's last name narrows the search without tripping on spelling)
+  const surname = author.split(/[,&]|\band\b/)[0].trim().split(/\s+/).pop() ?? ''
+  const query = encodeURIComponent(`${wanted} ${surname}`.trim())
+  const found = (await getJson(
+    `https://openlibrary.org/search.json?q=${query}&limit=8&fields=title,cover_i`,
+    12000,
+  )) as { docs?: { title?: string; cover_i?: number }[] } | null
+  const match = found?.docs?.find(doc => doc.cover_i && titleKey(doc.title ?? '') === wanted)
+  if (!match) return null
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 15000)
+  try {
+    const response = await net.fetch(`https://covers.openlibrary.org/b/id/${match.cover_i}-L.jpg`, {
+      headers: { 'user-agent': HEADERS['user-agent'] },
+      signal: controller.signal,
+    })
+    if (!response.ok || !/^image\//.test(response.headers.get('content-type') ?? '')) return null
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    // (Open Library answers a missing cover with a 1x1 image)
+    return bytes.length > 2000 && bytes.length <= MAX_COVER_DOWNLOAD ? bytes : null
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}

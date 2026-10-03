@@ -26,10 +26,18 @@
       ],
     },
     {
+      title: 'In the library',
+      keys: [
+        [['←', '→', '↑', '↓'], 'Move between books'],
+        [['Enter'], 'Open the book'],
+      ],
+    },
+    {
       title: 'View',
       keys: [
         [['Ctrl++', 'Ctrl+−', 'Ctrl+0'], 'Larger or smaller text; zoom in a PDF'],
         [['F11'], 'Full screen'],
+        [['F6'], 'Between the book’s text and the toolbar'],
         [['Esc'], 'Close whatever is open'],
         [['?'], 'This list'],
       ],

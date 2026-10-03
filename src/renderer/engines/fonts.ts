@@ -22,27 +22,37 @@ const RANGES: Record<string, string> = {
     'U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD',
 }
 
+const codeFiles = import.meta.glob<string>(
+  '../../../node_modules/@fontsource-variable/jetbrains-mono/files/jetbrains-mono-*-wght-*.woff2',
+  { eager: true, query: '?url', import: 'default' },
+)
+
 export const READING_FONT = 'Literata Variable'
+/** The typeface for code in books: the system's "monospace" is often a thin Courier. */
+export const CODE_FONT = 'JetBrains Mono Variable'
 
-let css: string | null = null
-
-export function readingFontCSS(): string {
-  if (css != null) return css
+function fontFaces(family: string, weights: string, sources: Record<string, string>): string {
   const base = typeof document === 'undefined' ? undefined : document.baseURI
-  css = Object.entries(files)
+  return Object.entries(sources)
     .map(([path, url]) => {
-      const match = /literata-(.+)-wght-(normal|italic)\.woff2$/.exec(path)
+      const match = /-([a-z-]+?)-wght-(normal|italic)\.woff2$/.exec(path.replace(/^.*\/(literata|jetbrains-mono)/, ''))
       const range = match && RANGES[match[1]]
       if (!match || !range) return ''
       return `@font-face {
-      font-family: '${READING_FONT}';
+      font-family: '${family}';
       font-style: ${match[2]};
-      font-weight: 200 900;
+      font-weight: ${weights};
       font-display: swap;
       src: url(${JSON.stringify(base ? new URL(url, base).href : url)}) format('woff2');
       unicode-range: ${range};
     }`
     })
     .join('\n')
+}
+
+let css: string | null = null
+
+export function readingFontCSS(): string {
+  css ??= fontFaces(READING_FONT, '200 900', files) + '\n' + fontFaces(CODE_FONT, '100 800', codeFiles)
   return css
 }

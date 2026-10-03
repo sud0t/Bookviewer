@@ -359,15 +359,12 @@
   async function highlight(color: HighlightColor, withNote = false) {
     if (popover?.kind !== 'selection') return
     const { info } = popover
-    const saved = await store.add({
-      selector: info.selector,
-      text: info.text,
-      note: '',
-      color,
-      style: 'highlight',
-      label: info.label,
-      position: info.position,
-    })
+    // (a PDF selection over a page break is kept as one highlight per page)
+    const [first, ...rest] = info.parts ?? [info]
+    const mark = ({ selector, text, label, position }: typeof first) =>
+      store.add({ selector, text, note: '', color, style: 'highlight', label, position })
+    const saved = await mark(first)
+    for (const part of rest) await mark(part)
     engine?.clearSelection()
     if (withNote) {
       openAnnotation(saved.id, info.rect)
@@ -577,6 +574,14 @@
         event.preventDefault()
         leave()
       }
+      return
+    }
+    // F6 goes between the book's text (where Tab walks its links) and the toolbar.
+    if (event.key === 'F6') {
+      event.preventDefault()
+      const inBars = !!document.activeElement?.closest('.toolbar')
+      if (inBars) engine.focus()
+      else document.querySelector<HTMLElement>('.reader .toolbar button:not(:disabled)')?.focus()
       return
     }
     if (mod && event.key.toLowerCase() === 'f') {

@@ -168,6 +168,12 @@ function namedExtension(disposition: string | null, pathname: string): string | 
   return null
 }
 
+/** Whether a response is a book file we can keep (going by its type, else its name). */
+export function isBookDownload(contentType: string, pathname: string): boolean {
+  const type = contentType.split(';')[0].trim().toLowerCase()
+  return type in TYPE_EXTENSIONS || !!namedExtension(null, pathname)
+}
+
 /** The extension a download should get, from its headers and URL. */
 export function downloadExtension(
   contentType: string,

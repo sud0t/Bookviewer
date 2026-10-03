@@ -73,6 +73,7 @@
     if (!hit) return
     active = index
     onnavigate(hit.target)
+    engine.markSearchHit?.(hit.target)
     requestAnimationFrame(() =>
       results?.querySelector('[aria-current="true"]')?.scrollIntoView({ block: 'nearest' }),
     )

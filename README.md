@@ -51,6 +51,9 @@ vertical scroll with highlights, notes, search, lookup and read-aloud.
 - **Themes** – light, sepia, gray, dark, black (or follow the system); font,
   size, line spacing, column width, justification, hyphenation.
 - **OPDS** catalogs – browse and download into a library folder.
+- **Add from a web address** – paste the URL of an online book (its contents
+  page), a single article, or a PDF/e-book file; it is saved into a library
+  folder and read offline like any other book.
 
 ## Running it
 
@@ -111,6 +114,8 @@ against the system `electron` package instead of bundling one
 | `Ctrl+wheel` | zoom (PDF) |
 | `F11` | full screen |
 | `Esc` | close whatever is open / leave full screen |
+| `F6` | between the book's text and the toolbar |
+| `←` `→` `↑` `↓` in the library | move between books |
 | `?` | list of shortcuts |
 
 ## How it is put together

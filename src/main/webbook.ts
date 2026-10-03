@@ -328,6 +328,7 @@ function findToc(
   /** With no navigation element, fall back on the links in the page body. */
   fallback = true,
 ): TocNode[] {
+  let nav: TocNode[] = []
   for (const selector of [...NAV_SELECTORS[generator], ...GENERIC_NAV]) {
     let best: TocNode[] = []
     for (const el of $(selector).toArray()) {
@@ -335,9 +336,12 @@ function findToc(
       const toc = parseNav($, el, resolve)
       if (countLinks(toc) > countLinks(best)) best = toc
     }
-    if (countLinks(best) >= 2) return best
+    if (countLinks(best) >= 2) {
+      nav = best
+      break
+    }
   }
-  if (!fallback) return []
+  if (!fallback) return nav
   // No navigation element: use the page's own links, in order.
   const seen = new Set<string>()
   const flat: TocNode[] = []
@@ -348,7 +352,10 @@ function findToc(
     seen.add(target.path)
     flat.push({ label, href: target.path + target.hash, children: [] })
   }
-  return flat
+  // A navigation bar that is only the site's menu (a few links, while the
+  // page itself lists the chapters) is not the book's table of contents.
+  const navPages = new Set(flattenToc(nav).map(node => node.href?.replace(/#.*$/, '')).filter(Boolean)).size
+  return navPages && (flat.length < 3 || navPages * 3 > flat.length) ? nav : flat
 }
 
 const SEPARATORS = [' — ', ' – ', ' | ', ' · ', ' :: ', ' - ', ' « ', ' » ']

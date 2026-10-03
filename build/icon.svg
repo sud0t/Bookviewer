@@ -1,118 +1,39 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
-    <linearGradient id="bg" x1="0.08" y1="0" x2="0.92" y2="1">
-      <stop offset="0" stop-color="#FFC24A"/>
-      <stop offset="0.46" stop-color="#FF8A1F"/>
-      <stop offset="1" stop-color="#F0481E"/>
+    <linearGradient id="gutterL" x1="256" x2="200" y1="0" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#EBCFAE"/>
+      <stop offset="1" stop-color="#FFF8EE" stop-opacity="0"/>
     </linearGradient>
-    <radialGradient id="sheen" cx="150" cy="40" r="300" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.22"/>
-      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
-    </radialGradient>
-    <linearGradient id="rim" x1="0" y1="24" x2="0" y2="488" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.5"/>
-      <stop offset="0.45" stop-color="#FFFFFF" stop-opacity="0.06"/>
-      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    <linearGradient id="gutterR" x1="256" x2="312" y1="0" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F0D8BC"/>
+      <stop offset="1" stop-color="#FFFDF8" stop-opacity="0"/>
     </linearGradient>
-
-    <linearGradient id="pageL" x1="256" y1="0" x2="96" y2="0" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#F2CDA6"/>
-      <stop offset="0.09" stop-color="#FFF1E0"/>
-      <stop offset="0.36" stop-color="#FFFFFF"/>
-      <stop offset="0.75" stop-color="#FFFFFF"/>
-      <stop offset="1" stop-color="#FFF6EC"/>
-    </linearGradient>
-    <linearGradient id="pageR" x1="256" y1="0" x2="416" y2="0" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#F2CDA6"/>
-      <stop offset="0.09" stop-color="#FFF1E0"/>
-      <stop offset="0.36" stop-color="#FFFFFF"/>
-      <stop offset="0.75" stop-color="#FFFFFF"/>
-      <stop offset="1" stop-color="#FFF6EC"/>
-    </linearGradient>
-    <linearGradient id="stack" x1="0" y1="140" x2="0" y2="381" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#FFF2E2"/>
-      <stop offset="1" stop-color="#FBDDBD"/>
-    </linearGradient>
-    <linearGradient id="cover" x1="0" y1="150" x2="0" y2="388" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#FFD9AE"/>
-      <stop offset="1" stop-color="#F5B27A"/>
-    </linearGradient>
-
-    <linearGradient id="socket" x1="0" y1="211" x2="0" y2="309" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#2E1206"/>
-      <stop offset="0.55" stop-color="#4A1D08"/>
-      <stop offset="1" stop-color="#6A2A0C"/>
-    </linearGradient>
-    <linearGradient id="bevel" x1="0" y1="205" x2="0" y2="316" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#EDBE93"/>
-      <stop offset="0.5" stop-color="#FFE6CB"/>
-      <stop offset="1" stop-color="#FFFFFF"/>
-    </linearGradient>
-    <radialGradient id="iris" cx="256" cy="255" r="49" gradientUnits="userSpaceOnUse">
-      <stop offset="0.36" stop-color="#FFE9A8"/>
-      <stop offset="0.6" stop-color="#FFB52E"/>
-      <stop offset="0.84" stop-color="#FF8A1A"/>
-      <stop offset="1" stop-color="#C9500F"/>
-    </radialGradient>
-    <radialGradient id="irisLight" cx="262" cy="292" r="40" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#FFF8DC" stop-opacity="0.5"/>
-      <stop offset="1" stop-color="#FFF8DC" stop-opacity="0"/>
-    </radialGradient>
-    <linearGradient id="lidShade" x1="0" y1="208" x2="0" y2="248" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#3A1505" stop-opacity="0.6"/>
-      <stop offset="1" stop-color="#3A1505" stop-opacity="0"/>
-    </linearGradient>
-    <radialGradient id="glow" cx="256" cy="255" r="90" gradientUnits="userSpaceOnUse">
-      <stop offset="0.52" stop-color="#FFC14D" stop-opacity="0.34"/>
-      <stop offset="0.78" stop-color="#FF8A2A" stop-opacity="0.12"/>
-      <stop offset="1" stop-color="#FF8A2A" stop-opacity="0"/>
-    </radialGradient>
-    <clipPath id="almond">
-      <path d="M152 264 C204 194 308 194 360 264 C308 324 204 324 152 264 Z"/>
-    </clipPath>
-    <clipPath id="irisClip">
-      <circle cx="256" cy="255" r="49"/>
-    </clipPath>
-
-    <filter id="bookShadow" x="-20%" y="-20%" width="140%" height="150%">
-      <feGaussianBlur in="SourceAlpha" stdDeviation="14"/>
-      <feOffset dy="16" result="b"/>
-      <feFlood flood-color="#8A2A05" flood-opacity="0.45"/>
-      <feComposite in2="b" operator="in" result="s"/>
-      <feMerge>
-        <feMergeNode in="s"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
   </defs>
-
-  <!-- tile -->
-  <rect x="24" y="24" width="464" height="464" rx="104" fill="url(#bg)"/>
-  <rect x="24" y="24" width="464" height="464" rx="104" fill="url(#sheen)"/>
-  <rect x="25.5" y="25.5" width="461" height="461" rx="102.5" fill="none" stroke="url(#rim)" stroke-width="3"/>
-
-  <!-- book -->
-  <g filter="url(#bookShadow)" transform="translate(0 -8)">
-    <path fill="url(#cover)" d="M256 198 C234 164 164 140 104 156 Q84 161.3 84 181.3 L84 332.3 Q84 357.3 104 352 C164 336 234 360 256 394 C278 360 348 336 408 352 Q428 357.3 428 332.3 L428 181.3 Q428 161.3 408 156 C348 140 278 164 256 198 Z"/>
-    <path fill="url(#stack)" d="M256 191 C234 157 167 133 109 149 Q90 154.2 90 173.2 L90 326.2 Q90 350.2 109 345 C167 329 234 353 256 387 C278 353 345 329 403 345 Q422 350.2 422 326.2 L422 173.2 Q422 154.2 403 149 C345 133 278 157 256 191 Z"/>
-    <path fill="url(#pageL)" d="M256 184 C234 150 170 126 114 142 Q96 147.1 96 165.1 L96 320.1 Q96 343.1 114 338 C170 322 234 346 256 380 Z"/>
-    <path fill="url(#pageR)" d="M256 184 C278 150 342 126 398 142 Q416 147.1 416 165.1 L416 320.1 Q416 343.1 398 338 C342 322 278 346 256 380 Z"/>
+  <g transform="translate(0 -26)">
+  <!-- cover: thickness, then face -->
+  <path fill="#B8430F" d="M256 186 C200 146 116 140 52 160 Q36 165 36 182 L36 398 Q36 418 56 413 C120 397 200 402 256 438 C312 402 392 397 456 413 Q476 418 476 398 L476 182 Q476 165 460 160 C396 140 312 146 256 186 Z"/>
+  <path fill="#FF8A1F" d="M256 172 C200 132 116 126 52 146 Q36 151 36 168 L36 384 Q36 404 56 399 C120 383 200 388 256 424 C312 388 392 383 456 399 Q476 404 476 384 L476 168 Q476 151 460 146 C396 126 312 132 256 172 Z"/>
+  <path fill="#FFB054" d="M256 172 C200 132 116 126 52 146 Q36 151 36 168 L36 180 Q36 163 52 158 C116 138 200 144 256 184 C312 144 396 138 460 158 Q476 163 476 180 L476 168 Q476 151 460 146 C396 126 312 132 256 172 Z"/>
+  <!-- page block edges -->
+  <path fill="#E9C9A3" d="M256 170 C206 130 134 122 76 138 Q62 142 62 156 L62 368 Q62 384 78 380 C138 366 206 372 256 406 C306 372 374 366 434 380 Q450 384 450 368 L450 156 Q450 142 436 138 C378 122 306 130 256 170 Z"/>
+  <!-- pages -->
+  <path fill="#FFF8EE" d="M256 158 C206 118 134 110 76 126 Q62 130 62 144 L62 350 Q62 366 78 362 C138 348 206 354 256 388 Z"/>
+  <path fill="#FFFDF8" d="M256 158 C306 118 378 110 436 126 Q450 130 450 144 L450 350 Q450 366 434 362 C374 348 306 354 256 388 Z"/>
+  <!-- gutter shade -->
+  <path fill="url(#gutterL)" d="M256 158 C240 145 222 135 200 128 L200 357 C222 364 240 375 256 388 Z"/>
+  <path fill="url(#gutterR)" d="M256 158 C272 145 290 135 312 128 L312 357 C290 364 272 375 256 388 Z"/>
+  <!-- text -->
+  <g fill="none" stroke="#E6CBAA" stroke-width="12" stroke-linecap="round">
+    <path d="M98 172 C140 162 178 164 212 178"/>
+    <path d="M98 212 C140 202 178 204 212 218"/>
+    <path d="M98 252 C140 242 178 244 212 258"/>
+    <path d="M98 292 C130 284 156 284 180 292"/>
+    <path d="M300 178 C334 164 372 162 414 172"/>
+    <path d="M300 218 C334 204 372 202 414 212"/>
   </g>
-
-  <!-- eye -->
-  <g transform="translate(0 -4)">
-    <path fill="url(#bevel)" d="M141 264 C199 185 313 185 371 264 C313 333 199 333 141 264 Z"/>
-    <path fill="url(#socket)" d="M152 264 C204 194 308 194 360 264 C308 324 204 324 152 264 Z"/>
-    <g clip-path="url(#almond)">
-      <circle cx="256" cy="255" r="90" fill="url(#glow)"/>
-      <circle cx="256" cy="255" r="49" fill="url(#iris)"/>
-      <g clip-path="url(#irisClip)">
-        <circle cx="262" cy="292" r="40" fill="url(#irisLight)"/>
-        <rect x="196" y="204" width="120" height="44" fill="url(#lidShade)"/>
-      </g>
-      <circle cx="256" cy="255" r="19" fill="#2A0F04"/>
-      <circle cx="239" cy="238" r="9.5" fill="#FFFFFF"/>
-      <circle cx="274" cy="274" r="4" fill="#FFFFFF" fill-opacity="0.75"/>
-    </g>
+  <!-- bookmark ribbon -->
+  <path fill="#A8321C" d="M352 132 L388 128 L388 140 L352 144 Z"/>
+  <path fill="#E5482E" d="M352 136 L388 132 L388 300 L370 284 L352 300 Z"/>
+  <path fill="#F26A4F" d="M352 136 L362 135 L362 291 L352 300 Z"/>
   </g>
 </svg>

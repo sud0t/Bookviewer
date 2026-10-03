@@ -77,6 +77,12 @@ const MIGRATIONS: string[] = [
     value TEXT NOT NULL
   );
   `,
+  // A book the reader took out of the library: its row (and notes) stay, so
+  // that the next scan does not simply add the file again.
+  `ALTER TABLE books ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;`,
+  // Covers are now also looked for beyond the file's own metadata: give the
+  // books that have none another go.
+  `UPDATE books SET meta_state = 'pending' WHERE cover_version = 0 AND format <> 'web';`,
 ]
 
 interface BookRow {
@@ -217,7 +223,7 @@ export class Store {
     return this.db
       .prepare(
         `SELECT f.id, f.path, f.added_at AS addedAt,
-           (SELECT count(*) FROM books b WHERE b.folder_id = f.id AND b.missing = 0) AS bookCount
+           (SELECT count(*) FROM books b WHERE b.folder_id = f.id AND b.missing = 0 AND b.hidden = 0) AS bookCount
          FROM folders f ORDER BY f.path`,
       )
       .all() as Omit<Folder, 'missing'>[]
@@ -254,7 +260,7 @@ export class Store {
 
   listBooks(): Book[] {
     const rows = this.db
-      .prepare(`SELECT ${BOOK_COLUMNS} FROM books WHERE missing = 0`)
+      .prepare(`SELECT ${BOOK_COLUMNS} FROM books WHERE missing = 0 AND hidden = 0`)
       .all() as BookRow[]
     return rows.map(toBook)
   }
@@ -416,6 +422,30 @@ export class Store {
 
   markOpened(id: number): void {
     this.db.prepare('UPDATE books SET last_opened_at = ? WHERE id = ?').run(Date.now(), id)
+  }
+
+  getBookByPath(path: string): Book | null {
+    const row = this.db.prepare(`SELECT ${BOOK_COLUMNS} FROM books WHERE path = ?`).get(path) as
+      | BookRow
+      | undefined
+    return row ? toBook(row) : null
+  }
+
+  /** Takes a book out of the library's list (or puts it back). Its notes are kept. */
+  setHidden(id: number, hidden: boolean): void {
+    this.db.prepare('UPDATE books SET hidden = ? WHERE id = ?').run(hidden ? 1 : 0, id)
+  }
+
+  /** How many books that are still on disk have been taken out of the list. */
+  countHidden(): number {
+    const row = this.db
+      .prepare('SELECT count(*) AS n FROM books WHERE hidden = 1 AND missing = 0')
+      .get() as { n: number }
+    return row.n
+  }
+
+  restoreHidden(): void {
+    this.db.prepare('UPDATE books SET hidden = 0 WHERE hidden = 1').run()
   }
 
   /** Drops a book's row (and with it, its annotations). The file is untouched. */

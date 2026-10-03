@@ -32,6 +32,7 @@ import {
 } from 'pdfjs-dist/web/pdf_viewer.mjs'
 import 'pdfjs-dist/web/pdf_viewer.css'
 import './pdf.css'
+import { selectForContextMenu } from './context'
 import { describeRange } from '../annotations/anchor'
 import { fileName, openFailure } from './formats'
 import { PALETTES } from './appearance'
@@ -43,6 +44,7 @@ import {
   type EngineEvents,
   type Relocation,
   type SearchHit,
+  type SelectionInfo,
   type SearchOptions,
   type SearchUpdate,
   type SpeechSegment,
@@ -73,6 +75,9 @@ interface PageViewLike {
   }
   textLayer?: { div: HTMLDivElement } | null
 }
+
+/** A selection is highlighted over at most this many pages. */
+const MAX_SELECTION_PAGES = 12
 
 interface PdfLocation {
   page: number
@@ -114,6 +119,7 @@ export class PdfEngine implements Engine {
   private eventBus = new EventBus()
   private linkService: PDFLinkService | null = null
   private container: HTMLDivElement | null = null
+  private findController: PDFFindController | null = null
   private appearance!: Appearance
   private annotations: Annotation[] = []
   private tocPages: { id: string; label: string; page: number }[] = []
@@ -160,6 +166,7 @@ export class PdfEngine implements Engine {
       ignoreDestinationZoom: true,
     })
     const findController = new PDFFindController({ eventBus, linkService })
+    this.findController = findController
     const viewer = new PDFViewer({
       container,
       viewer: viewerElement,
@@ -225,6 +232,15 @@ export class PdfEngine implements Engine {
     const { signal } = this.abort
     container.addEventListener('pointerup', () => setTimeout(() => this.reportSelection()), { signal })
     container.addEventListener('click', event => this.onClick(event), { signal })
+    container.addEventListener(
+      'contextmenu',
+      event => {
+        event.preventDefault()
+        const inText = (event.target as Element | null)?.closest?.('.textLayer')
+        if (inText && selectForContextMenu(document, event)) this.reportSelection()
+      },
+      { signal },
+    )
     container.addEventListener('wheel', event => this.onWheel(event), { passive: false, signal })
     document.addEventListener(
       'selectionchange',
@@ -634,30 +650,65 @@ export class PdfEngine implements Engine {
     if (!selection || selection.isCollapsed || !selection.rangeCount) return
     const range = selection.getRangeAt(0)
     if (!this.container?.contains(range.commonAncestorContainer)) return
-    const page = this.pageOfNode(range.startContainer)
-    const view = page ? this.pageView(page) : null
-    const layer = view?.textLayer?.div
-    if (!page || !view || !layer) return
-    // A highlight lives on one page: clip a longer selection to where it starts.
-    const clipped = range.cloneRange()
-    if (!layer.contains(range.endContainer)) clipped.setEnd(layer, layer.childNodes.length)
-    const rects = this.rectsOf(clipped, view)
-    const described = describeRange(layer, clipped)
-    const text = layerText(layer, clipped)
-    if (!rects.length || !described || !text) return
+    const first = this.pageOfNode(range.startContainer)
+    if (!first) return
+    const last = Math.min(this.pageOfNode(range.endContainer) ?? first, first + MAX_SELECTION_PAGES - 1)
     const total = this.viewer?.pagesCount || 1
-    const bounds = clipped.getBoundingClientRect()
-    // how far down the page (as displayed, whatever its rotation) it starts
-    const [, top] = view.viewport.convertToViewportPoint(rects[0][0], rects[0][3])
-    const inPage = Math.min(0.999, Math.max(0, top / Math.max(1, view.viewport.height)))
+    // A highlight lives on one page: a selection that runs over a page break
+    // is cut into one piece per page.
+    const parts: (NonNullable<SelectionInfo['parts']>[number] & { bounds: DOMRect })[] = []
+    for (let page = first; page <= last; page++) {
+      const view = this.pageView(page)
+      const layer = view?.textLayer?.div
+      if (!view || !layer) continue
+      const piece = range.cloneRange()
+      if (!layer.contains(range.startContainer)) piece.setStart(layer, 0)
+      if (!layer.contains(range.endContainer)) piece.setEnd(layer, layer.childNodes.length)
+      const rects = this.rectsOf(piece, view)
+      const described = describeRange(layer, piece)
+      const text = layerText(layer, piece)
+      if (!rects.length || !described || !text) continue
+      // how far down the page (as displayed, whatever its rotation) it starts
+      const [, top] = view.viewport.convertToViewportPoint(rects[0][0], rects[0][3])
+      const inPage = Math.min(0.999, Math.max(0, top / Math.max(1, view.viewport.height)))
+      parts.push({
+        text,
+        selector: { type: 'pdf', page, rects, quote: described.quote },
+        label: this.tocAt(page)?.label ?? `Page ${page}`,
+        position: (page - 1 + inPage) / total,
+        bounds: piece.getBoundingClientRect(),
+      })
+    }
+    if (!parts.length) return
+    // the popover goes by the piece that ends where the pointer was let go
+    const { bounds } = parts[parts.length - 1]
+    const pieces = parts.map(({ bounds: _bounds, ...part }) => part)
     this.events.selection({
-      text,
-      selector: { type: 'pdf', page, rects, quote: described.quote },
-      label: this.tocAt(page)?.label ?? `Page ${page}`,
-      position: (page - 1 + inPage) / total,
+      ...pieces[0],
+      text: pieces.map(part => part.text).join(' '),
       rect: bounds,
       language: this.language,
+      parts: pieces.length > 1 ? pieces : undefined,
     })
+  }
+
+  markSearchHit(target: string | null): void {
+    const controller = this.findController as unknown as {
+      _selected?: { pageIdx: number; matchIdx: number }
+    } | null
+    const selected = controller?._selected
+    if (!selected) return
+    let location: (PdfLocation & { match?: number }) | null = null
+    try {
+      location = target ? JSON.parse(target) : null
+    } catch {
+      location = null
+    }
+    const previous = selected.pageIdx
+    selected.pageIdx = location ? location.page - 1 : -1
+    selected.matchIdx = location?.match ?? -1
+    for (const pageIndex of new Set([previous, selected.pageIdx]))
+      if (pageIndex >= 0) this.eventBus.dispatch('updatetextlayermatches', { source: controller, pageIndex })
   }
 
   /** The page's height in PDF units. */
@@ -858,7 +909,8 @@ export class PdfEngine implements Engine {
         }
         const location: PdfLocation = { page, left: null, top: item ? item.y + 60 : null }
         hits.push({
-          target: JSON.stringify(location),
+          // (`match` is which of the page's matches this is, for `markSearchHit`)
+          target: JSON.stringify({ ...location, match: hits.length }),
           pre: (at > 40 ? '…' : '') + text.slice(Math.max(0, at - 40), at),
           match: match[0],
           post: text.slice(at + match[0].length, at + match[0].length + 60).trimEnd() + '…',

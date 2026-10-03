@@ -39,6 +39,11 @@ export interface SelectionInfo {
   position: number
   rect: ViewportRect
   language: string
+  /**
+   * When the selection cannot be kept as one highlight (in a PDF, it runs
+   * over a page break): the pieces to highlight instead, in reading order.
+   */
+  parts?: Pick<SelectionInfo, 'text' | 'selector' | 'label' | 'position'>[]
 }
 
 export interface SearchHit {
@@ -145,6 +150,8 @@ export interface Engine {
 
   search(query: string, options: SearchOptions): AsyncGenerator<SearchUpdate>
   clearSearch(): void
+  /** Draws one search result (a hit's `target`) as the current one; null for none. */
+  markSearchHit?(target: string | null): void
 
   /**
    * Yields the text from the current position (or selection) onwards, one

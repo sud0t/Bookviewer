@@ -171,6 +171,15 @@ export async function scanFolder(
   return books
 }
 
+/** A library "folder" may also be one book file, opened on its own from outside the library. */
+export async function scanFile(path: string): Promise<ScannedBook[]> {
+  const name = path.slice(path.lastIndexOf(sep) + 1)
+  const format = formatOf(name)
+  if (!format) return []
+  const info = await stat(path)
+  return [{ path, format, title: titleFromName(name), size: info.size, mtime: Math.round(info.mtimeMs) }]
+}
+
 export class Library {
   private watchers = new Map<number, FSWatcher>()
   private timers = new Map<number, NodeJS.Timeout>()
@@ -236,6 +245,38 @@ export class Library {
     return this.listFolders().find(folder => folder.id === id) ?? null
   }
 
+  /**
+   * Takes a path handed to the app from outside (command line, a drop on the
+   * window). A directory joins the library. A book file is found in the
+   * library, or added on its own when no folder covers it; resolves to its id.
+   */
+  async openPath(path: string): Promise<number | null> {
+    const absolute = resolve(path)
+    let info
+    try {
+      info = await stat(absolute)
+    } catch {
+      return null
+    }
+    if (info.isDirectory()) {
+      this.addFolder(absolute)
+      return null
+    }
+    if (!info.isFile() || !formatOf(absolute)) return null
+    let book = this.store.getBookByPath(absolute)
+    if (!book || book.missing) {
+      const folder = this.addFolder(absolute)
+      if (!folder) return null
+      await this.scan(folder.id)
+      book = this.store.getBookByPath(absolute)
+    }
+    if (!book || book.missing) return null
+    // asked for by name: a book taken out of the list comes back
+    this.store.setHidden(book.id, false)
+    this.notify.changed()
+    return book.id
+  }
+
   async removeFolder(id: number): Promise<void> {
     await this.watchers.get(id)?.close()
     this.watchers.delete(id)
@@ -275,7 +316,9 @@ export class Library {
     let found = 0
     try {
       if (existsSync(folder.path)) {
-        const books = await scanFolder(folder.path, this.store.knownWebBooks(id))
+        const books = (await stat(folder.path)).isFile()
+          ? await scanFile(folder.path)
+          : await scanFolder(folder.path, this.store.knownWebBooks(id))
         found = books.length
         if (this.stopped) return
         // The folder may have been removed (and its id even reused) while

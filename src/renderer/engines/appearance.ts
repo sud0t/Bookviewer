@@ -3,7 +3,7 @@
  * dark themes. Works on the same-origin iframe documents the renderers load.
  */
 import type { ThemeName } from '@shared/types'
-import { READING_FONT, readingFontCSS } from './fonts'
+import { CODE_FONT, READING_FONT, readingFontCSS } from './fonts'
 import type { Appearance } from './types'
 
 interface Palette {
@@ -48,7 +48,7 @@ const FONT_STACKS: Record<string, string> = {
   serif: `'${READING_FONT}', 'Literata', 'Source Serif 4', 'Noto Serif', 'Liberation Serif', Georgia, serif`,
   'sans-serif':
     "'Inter', 'Adwaita Sans', 'Noto Sans', 'Cantarell', 'Liberation Sans', system-ui, sans-serif",
-  monospace: "'JetBrains Mono', 'Fira Code', 'Noto Sans Mono', monospace",
+  monospace: `'${CODE_FONT}', 'JetBrains Mono', 'Fira Code', 'Noto Sans Mono', monospace`,
 }
 
 export function fontStack(family: string): string {
@@ -93,12 +93,26 @@ export function contentCSS({ settings, theme }: Appearance): string {
       -webkit-hyphenate-limit-before: 3;
       -webkit-hyphenate-limit-after: 2;
     }
+    pre, code, kbd, samp, tt {
+      font-family: ${FONT_STACKS.monospace} !important;
+      font-variant-ligatures: none;
+    }
     [align="left"] { text-align: left; }
     [align="right"] { text-align: right; }
     [align="center"] { text-align: center; }
     [align="justify"] { text-align: justify; }`
         : ''
     }
+    /* Code within a sentence gets a quiet chip, so it reads as code in every
+       theme. (:where: no specificity, the book's own styling of it wins.) */
+    :where(:not(pre) > code, kbd, samp, tt) {
+      padding: 0.1em 0.32em;
+      border-radius: 4px;
+      background: color-mix(in srgb, currentColor 10%, transparent);
+      -webkit-box-decoration-break: clone;
+      box-decoration-break: clone;
+    }
+    :where(a) > :where(code, kbd, samp, tt) { color: inherit; }
     pre {
       white-space: pre-wrap !important;
       overflow-wrap: anywhere;
@@ -162,6 +176,34 @@ export function applyFontSize(doc: Document, fontSize: number): void {
   const actual = parseFloat(view.getComputedStyle(doc.body).fontSize)
   if (Math.abs(actual - fontSize) > 0.5)
     style.textContent += ` body { font-size: ${fontSize}px !important; }`
+}
+
+const DARK_SCHEME = /prefers-color-scheme\s*:\s*dark/i
+
+/**
+ * Takes out a book's own "dark mode" rules. The page is always laid out as
+ * a light one (dark themes invert the result), so with a dark desktop those
+ * rules would put, say, a dark code box under text that is dark as well.
+ */
+export function dropDarkSchemeRules(doc: Document): void {
+  const clean = (sheet: CSSStyleSheet | CSSGroupingRule): void => {
+    let rules: CSSRuleList
+    try {
+      rules = sheet.cssRules
+    } catch {
+      return // not loaded yet, or not ours to read
+    }
+    for (let i = rules.length - 1; i >= 0; i--) {
+      const rule = rules[i] as CSSRule & { conditionText?: string; cssRules?: CSSRuleList; styleSheet?: CSSStyleSheet }
+      if (rule.conditionText != null && DARK_SCHEME.test(rule.conditionText)) sheet.deleteRule(i)
+      else if (rule.styleSheet) clean(rule.styleSheet)
+      else if (rule.cssRules) clean(rule as unknown as CSSGroupingRule)
+    }
+  }
+  for (const sheet of doc.styleSheets) clean(sheet)
+  // stylesheets still on their way in
+  for (const link of doc.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"]'))
+    if (!link.sheet) link.addEventListener('load', () => link.sheet && clean(link.sheet), { once: true })
 }
 
 const classified = new WeakSet<Element>()

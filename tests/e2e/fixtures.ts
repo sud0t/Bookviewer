@@ -54,8 +54,10 @@ const paragraphs = (topic: string, count: number): string =>
 
 const chapter = (title: string, body: string): string =>
   `<?xml version="1.0" encoding="utf-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>${title}</title></head>
-<body><h1 id="top">${title}</h1>${body}</body></html>`
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>${title}</title>
+<script>window.top.pwned = 'script'</script></head>
+<body onload="window.top.pwned = 'onload'"><h1 id="top">${title}</h1>${body}
+<img src="missing.png" alt="" onerror="window.top.pwned = 'onerror'"/></body></html>`
 
 export function makeEpub(): Buffer {
   return zip([

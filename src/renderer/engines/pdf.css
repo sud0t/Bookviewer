@@ -73,3 +73,9 @@
   opacity: 0.22;
   border-radius: 2px;
 }
+
+/* Search results: every match tinted, the one the reader is on stronger. */
+.bv-pdf .textLayer .highlight {
+  --highlight-bg-color: rgb(242 106 27 / 0.22);
+  --highlight-selected-bg-color: rgb(242 106 27 / 0.6);
+}

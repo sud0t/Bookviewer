@@ -10,33 +10,52 @@ Built with Electron + Vite (electron-vite), TypeScript, Svelte 5, SQLite
 
 ## Features
 
-- Library: add folders, auto-scan and watch them, covers, sort/filter/search
+- Library: add folders (button, or drop one on the window), auto-scan and watch
+  them, covers, sort/filter/search, arrow keys between books
+- `bookviewer book.epub` (or a book dropped on the window) opens that book; a
+  file outside every library folder is added on its own, as a one-file "folder"
+- A book can be removed from the library alone: its row is hidden (`books.hidden`),
+  not deleted, so scans do not re-add it; Undo, or Settings > "Put back removed books"
 - Reading in one continuous vertical scroll, or paginated (two pages)
 - HTML sites read as books: site chrome and scripts stripped, contents and
   page order taken from the site's own navigation
 - TeX math left in the text is rendered (MathJax); code is syntax-highlighted
 - Highlights and notes (5 colours, 4 styles) in EPUB, HTML and PDF; they
-  re-anchor by quoted text if the book changes; export to Markdown/JSON
+  re-anchor by quoted text if the book changes; export to Markdown/JSON. A PDF
+  selection over a page break is saved as one highlight per page
+- Right-click in book text selects the word under the pointer and shows the
+  selection menu; F6 goes between the book text and the toolbar
 - Bookmarks: red ribbon on a bookmarked page, toast naming the page with Undo,
   marks on the progress bar
 - Reading progress restored on reopen; bottom bar with prev/next, back/forward
   history, chapter marks, jump preview, go to page, time left in chapter
 - Library: "Continue reading" shelf, per-book menu (details, mark finished/unread)
-- Search within a book
-- Dictionary and Wikipedia lookup for the selection; translate link
+- Search within a book; the result you are on is drawn filled in the page
+- Dictionary and Wikipedia lookup for the selection; translate link; the
+  fallback lookup language and the translation language are in the library's Settings
 - Read aloud, sentence by sentence (system voices, espeak-ng, or Piper)
 - Themes (light, sepia, gray, dark, black), fonts, size, spacing, width; the UI
   colours are tokens in app.css (orange accent, red only for bookmarks)
 - OPDS catalogs: browse, search, download into a library folder
+- "Add from web address": a URL is saved into a library folder (`src/main/webgrab.ts`):
+  an HTML page plus, for "the whole book", the same-site pages under its directory
+  that it links to (and `rel=next` chains, mdBook's `toc.html`), with images and
+  stylesheets, as a saved site the scanner then reads; a PDF/e-book URL is
+  downloaded as it is. With no library folder yet it creates and adds `~/Books`
+- Covers: the file's own, else Open Library by title/author (setting
+  `onlineCovers`), else a picture of the first page (`Library/meta.ts`)
+- Code in books is set in the bundled JetBrains Mono, inline code gets a chip;
+  a book's own `prefers-color-scheme: dark` rules are removed (dark themes
+  invert a light page, see appearance.ts)
 - Packaging: AppImage, .deb, .pacman, and an Arch PKGBUILD
 
-Not done yet: MOBI/AZW3 untested with real files, offline (StarDict)
-dictionaries, a UI for lookup/translation language, opening a file from the
-command line, PDF highlights spanning pages. From the 2026-10-02 usability
-reviews, still open: Tab gets caught in the book text (no F6-style way to the
-toolbar), the current search match is not drawn differently in the page,
-right-click menu in book text, removing a single book from the library,
-arrow-key movement in the library grid, drag-and-drop of a folder.
+Not done yet: MOBI/AZW3 untested with real files (none on the dev machine),
+offline (StarDict) dictionaries. Drag-and-drop is only checked through the
+`library:openPaths` call it ends in (Playwright cannot drop files here), and a
+single saved HTML file cannot be opened from the command line. Saving from a
+URL does not run scripts, so sites that build their pages in the browser come
+out empty; it follows links one level deep only; there is no "update this
+saved book" yet.
 
 ## Commands
 
@@ -67,6 +86,7 @@ src/main/                  Electron main process
   library.ts                 scanning and watching folders
   webbook.ts                 recognising saved HTML sites; their page order and contents
   protocol.ts                book:// (serves book files to the UI) and app:// (the UI itself)
+  webgrab.ts                 saving a site / page from a URL into a library folder
   covers.ts lookup.ts tts.ts opds.ts util.ts
 src/preload/index.ts       the bridge the UI uses to call the main process
 src/renderer/              the UI
