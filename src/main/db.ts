@@ -448,9 +448,10 @@ export class Store {
     this.db.prepare('UPDATE books SET hidden = 0 WHERE hidden = 1').run()
   }
 
-  /** Drops a book's row (and with it, its annotations). The file is untouched. */
-  forgetBook(id: number): void {
-    this.db.prepare('DELETE FROM books WHERE id = ?').run(id)
+  /** Every book of a folder, hidden and missing ones included. */
+  bookIdsIn(folderId: number): number[] {
+    const rows = this.db.prepare('SELECT id FROM books WHERE folder_id = ?').all(folderId) as { id: number }[]
+    return rows.map(row => row.id)
   }
 
   /* ---------- annotations ---------- */

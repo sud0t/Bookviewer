@@ -327,7 +327,6 @@ export interface IpcHandlers {
   'books:opened'(id: number): void
   'books:manifest'(id: number): WebBookManifest | null
   'books:showInFolder'(id: number): void
-  'books:forget'(id: number): void
   /** Takes a book out of the library list without touching the file or its notes. */
   'books:setHidden'(id: number, hidden: boolean): void
   'books:hiddenCount'(): number

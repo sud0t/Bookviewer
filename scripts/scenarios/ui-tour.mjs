@@ -62,6 +62,17 @@ export default async ({ page, shot }) => {
     await capture(name('library-list'))
     await page.getByRole('button', { name: /grid or list|Show as grid|Grid view/i }).first().click()
 
+    await page.getByRole('button', { name: 'Settings' }).click()
+    await capture(name('settings'))
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: /Add from web address/ }).click()
+    await page.keyboard.type('example.com/book/')
+    await capture(name('add-from-web'))
+    await page.keyboard.press('Escape')
+    await page.locator('.card').first().click({ button: 'right' })
+    await capture(name('book-menu'))
+    await page.keyboard.press('Escape')
+
     // Open the first reflowable book (not a PDF), so every reader control applies.
     const books = await invoke('books:list')
     const book = books.find(b => b.format === 'epub') ?? books[0]

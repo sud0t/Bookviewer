@@ -80,7 +80,12 @@ export function registerIpc({ store, library, coversDir, isTrusted, takeLaunchBo
       return result.filePaths.flatMap(path => library.addFolder(path) ?? [])
     },
     'folders:addPath': (_event, path) => library.addFolder(String(path)),
-    'folders:remove': (_event, id) => library.removeFolder(id),
+    'folders:remove': async (_event, id) => {
+      // the books' rows go with the folder; so must their cached covers
+      const books = store.bookIdsIn(id)
+      await library.removeFolder(id)
+      await Promise.all(books.map(book => removeCover(coversDir, book)))
+    },
     'folders:rescan': (_event, id) => library.rescan(id),
 
     'books:list': () => store.listBooks(),
@@ -98,11 +103,6 @@ export function registerIpc({ store, library, coversDir, isTrusted, takeLaunchBo
     'books:showInFolder': (_event, id) => {
       const book = store.getBook(id)
       if (book) shell.showItemInFolder(book.path)
-    },
-    'books:forget': async (_event, id) => {
-      if (!Number.isInteger(id) || !store.getBook(id)) return
-      store.forgetBook(id)
-      await removeCover(coversDir, id)
     },
     'books:setHidden': (_event, id, hidden) => store.setHidden(id, !!hidden),
     'books:hiddenCount': () => store.countHidden(),
