@@ -31,6 +31,10 @@ Built with Electron + Vite (electron-vite), TypeScript, Svelte 5, SQLite
   history, chapter marks, jump preview, go to page, time left in chapter
 - Library: "Continue reading" shelf, per-book menu (details, mark finished/unread)
 - Search within a book; the result you are on is drawn filled in the page
+- Offline dictionaries (StarDict: `.ifo` + `.idx[.gz]` + `.dict[.dz]`, optional
+  `.syn`; `src/main/stardict.ts`) answer "Define" before the online services.
+  Looked for in the folder chosen in Settings, `~/.config/BookViewer/dictionaries`,
+  `~/.stardict/dic`, `~/.local/share/stardict/dic` and `/usr/share/stardict/dic`
 - Dictionary and Wikipedia lookup for the selection; translate link; the
   fallback lookup language and the translation language are in the library's Settings
 - Read aloud, sentence by sentence (system voices, espeak-ng, or Piper)
@@ -49,8 +53,9 @@ Built with Electron + Vite (electron-vite), TypeScript, Svelte 5, SQLite
   invert a light page, see appearance.ts)
 - Packaging: AppImage, .deb, .pacman, and an Arch PKGBUILD
 
-Not done yet: MOBI/AZW3 untested with real files (none on the dev machine),
-offline (StarDict) dictionaries. Drag-and-drop is only checked through the
+Not done yet: MOBI/AZW3 untested with real files (none on the dev machine).
+A word no offline dictionary has is still looked up online (there is no
+"offline only" switch), and offline articles are shown as plain text. Drag-and-drop is only checked through the
 `library:openPaths` call it ends in (Playwright cannot drop files here), and a
 single saved HTML file cannot be opened from the command line. Saving from a
 URL does not run scripts, so sites that build their pages in the browser come
@@ -91,6 +96,7 @@ src/main/                  Electron main process
   webbook.ts                 recognising saved HTML sites; their page order and contents
   protocol.ts                book:// (serves book files to the UI) and app:// (the UI itself)
   webgrab.ts                 saving a site / page from a URL into a library folder
+  stardict.ts                offline (StarDict) dictionaries
   covers.ts lookup.ts tts.ts opds.ts util.ts
 src/preload/index.ts       the bridge the UI uses to call the main process
 src/renderer/              the UI

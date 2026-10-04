@@ -1,5 +1,12 @@
 <script lang="ts">
-  import { EBOOK_EXTENSIONS, type Book, type Folder, type GrabProgress, type Settings } from '@shared/types'
+  import {
+    EBOOK_EXTENSIONS,
+    type Book,
+    type Folder,
+    type GrabProgress,
+    type OfflineDictionary,
+    type Settings,
+  } from '@shared/types'
   import appIcon from '../../../build/icon.svg'
   import Dialog from '../lib/Dialog.svelte'
   import Icon from '../lib/Icon.svelte'
@@ -398,6 +405,25 @@
     }
   }
 
+  /** The offline dictionaries in use (read whenever the settings are opened). */
+  let dictionaries = $state<OfflineDictionary[]>([])
+  $effect(() => {
+    if (settingsOpen) void ipc.invoke('dictionaries:list').then(found => (dictionaries = found.dictionaries))
+  })
+
+  async function chooseDictionaries() {
+    const found = await ipc.invoke('dictionaries:choose')
+    if (!found) return
+    dictionaries = found.dictionaries
+    // (the setting was stored by the main process; keep our copy in step)
+    app.settings = await ipc.invoke('settings:get')
+    toast(
+      found.dictionaries.length
+        ? `Using ${found.dictionaries.length} offline ${found.dictionaries.length === 1 ? 'dictionary' : 'dictionaries'}`
+        : 'No StarDict dictionaries (.ifo, .idx and .dict files) were found in that folder',
+    )
+  }
+
   /** Languages offered for looking words up and translating (the services' own codes). */
   const LANGUAGES: [string, string][] = [
     ['ar', 'Arabic'], ['zh', 'Chinese'], ['cs', 'Czech'], ['da', 'Danish'], ['nl', 'Dutch'],
@@ -751,6 +777,15 @@
       </select>
     </label>
     <p class="muted hint">A book that states its own language is looked up in that one.</p>
+    <div class="lang offline" title="StarDict dictionaries (.ifo, .idx and .dict files). Words found in them are not looked up online.">
+      <span>
+        Offline dictionaries
+        <small class="muted ellipsis">
+          {dictionaries.length ? dictionaries.map(d => d.name).join(', ') : 'None found'}
+        </small>
+      </span>
+      <button class="btn" onclick={chooseDictionaries}>Choose folder…</button>
+    </div>
     <hr />
     <label class="check" title="Sends the title and author of a book without a cover to openlibrary.org">
       <input
@@ -1058,6 +1093,14 @@
     justify-content: space-between;
     gap: 12px;
     margin-top: 6px;
+  }
+  .offline span {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .offline .btn {
+    flex: none;
   }
   .lang select {
     width: 150px;

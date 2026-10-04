@@ -203,6 +203,8 @@ export interface Settings {
   sidebarWidth: number
   /** Ask Open Library for the cover of a book that has none of its own. */
   onlineCovers: boolean
+  /** An extra folder of StarDict dictionaries ('' for only the usual places). */
+  dictionaryDir: string
   /** The library folder that catalog downloads are saved into; null until one has been chosen or used. */
   downloadFolderId?: number | null
 }
@@ -233,6 +235,7 @@ export const DEFAULT_SETTINGS: Settings = {
   translateTarget: 'en',
   sidebarWidth: 300,
   onlineCovers: true,
+  dictionaryDir: '',
   downloadFolderId: null,
 }
 
@@ -253,7 +256,17 @@ export interface DictionaryEntry {
     partOfSpeech: string
     definitions: { definition: string; example: string }[]
   }[]
+  /** The article as running text, for dictionaries that are not broken down into meanings (offline ones). */
+  text?: string
   source: string
+}
+
+/** A StarDict dictionary on disk. */
+export interface OfflineDictionary {
+  name: string
+  words: number
+  /** Its `.ifo` file. */
+  path: string
 }
 
 export interface TtsVoice {
@@ -346,6 +359,10 @@ export interface IpcHandlers {
 
   'lookup:wikipedia'(query: string, language: string): WikipediaSummary | null
   'lookup:dictionary'(query: string, language: string): DictionaryEntry[]
+  /** The offline (StarDict) dictionaries in use, and the folders they are looked for in. */
+  'dictionaries:list'(): { dictionaries: OfflineDictionary[]; folders: string[] }
+  /** Opens a directory picker for the dictionaries folder; null if cancelled. */
+  'dictionaries:choose'(): { dictionaries: OfflineDictionary[]; folders: string[] } | null
   /** A published book's cover image (from Open Library), or null. */
   'lookup:cover'(title: string, author: string): Uint8Array | null
 

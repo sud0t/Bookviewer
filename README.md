@@ -51,6 +51,8 @@ vertical scroll with highlights, notes, search, lookup and read-aloud.
 - **Themes** – light, sepia, gray, dark, black (or follow the system); font,
   size, line spacing, column width, justification, hyphenation.
 - **OPDS** catalogs – browse and download into a library folder.
+- **Offline dictionaries** – StarDict dictionaries in a folder you choose
+  (Settings) are used for "Define" before any online lookup.
 - **Add from a web address** – paste the URL of an online book (its contents
   page), a single article, or a PDF/e-book file; it is saved into a library
   folder and read offline like any other book.

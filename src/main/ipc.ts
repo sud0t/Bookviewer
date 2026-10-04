@@ -8,6 +8,7 @@ import type { Store } from './db'
 import type { Library } from './library'
 import { bookCover, dictionary, wikipedia } from './lookup'
 import { downloadBook, fetchImage, fetchOpds, isBookDownload } from './opds'
+import { DictionaryShelf } from './stardict'
 import { grabUrl } from './webgrab'
 import { speak, voices } from './tts'
 import { sanitizeFilename } from './util'
@@ -44,6 +45,22 @@ interface Context {
 
 export function registerIpc({ store, library, coversDir, isTrusted, takeLaunchBook, notify }: Context): void {
   const windowOf = (event: IpcMainInvokeEvent) => BrowserWindow.fromWebContents(event.sender)
+
+  /** Where offline dictionaries are looked for: the reader's own folder, then the usual places. */
+  const dictionaryFolders = (): string[] => {
+    const home = app.getPath('home')
+    return [
+      ...new Set([
+        store.getSettings().dictionaryDir,
+        join(app.getPath('userData'), 'dictionaries'),
+        join(home, '.stardict', 'dic'),
+        join(home, '.local', 'share', 'stardict', 'dic'),
+        '/usr/share/stardict/dic',
+      ]),
+    ].filter(Boolean)
+  }
+  const shelf = new DictionaryShelf(dictionaryFolders)
+  const offline = async () => ({ dictionaries: await shelf.list(), folders: dictionaryFolders() })
 
   /** The save-from-the-web under way, if any (one at a time). */
   let grabbing: AbortController | null = null
@@ -134,7 +151,29 @@ export function registerIpc({ store, library, coversDir, isTrusted, takeLaunchBo
     'settings:set': (_event, patch) => store.setSettings(patch),
 
     'lookup:wikipedia': (_event, query, language) => wikipedia(String(query), String(language)),
-    'lookup:dictionary': (_event, query, language) => dictionary(String(query), String(language)),
+    'lookup:dictionary': async (_event, query, language) => {
+      // dictionaries on disk answer first: at once, and without telling anyone the word
+      const local = await shelf.lookup(String(query)).catch((): [] => [])
+      return local.length ? local : dictionary(String(query), String(language))
+    },
+    'dictionaries:list': () => {
+      shelf.refresh()
+      return offline()
+    },
+    'dictionaries:choose': async event => {
+      const window = windowOf(event)
+      const options = {
+        title: 'Folder with StarDict dictionaries',
+        properties: ['openDirectory'] as 'openDirectory'[],
+      }
+      const result = window
+        ? await dialog.showOpenDialog(window, options)
+        : await dialog.showOpenDialog(options)
+      if (result.canceled || !result.filePaths[0]) return null
+      store.setSettings({ dictionaryDir: result.filePaths[0] })
+      shelf.refresh()
+      return offline()
+    },
 
     'lookup:cover': (_event, title, author) =>
       store.getSettings().onlineCovers ? bookCover(String(title), String(author)) : null,

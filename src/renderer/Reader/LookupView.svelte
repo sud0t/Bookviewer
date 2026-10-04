@@ -67,6 +67,7 @@
           {entry.word}
           {#if entry.phonetic}<span class="phonetic muted">{entry.phonetic}</span>{/if}
         </h3>
+        {#if entry.text}<p class="article">{entry.text}</p>{/if}
         {#each entry.meanings as meaning, j (j)}
           {#if meaning.partOfSpeech}<div class="pos">{meaning.partOfSpeech}</div>{/if}
           <ol>
@@ -79,7 +80,7 @@
           </ol>
         {/each}
       {/each}
-      <div class="source muted">Source: {result.entries[0].source}</div>
+      <div class="source muted">Source: {[...new Set(result.entries.map(entry => entry.source))].join(', ')}</div>
     {:else}
       {@const summary = result.summary}
       <div class="wiki">
@@ -148,6 +149,11 @@
   }
   li {
     margin-bottom: 4px;
+  }
+  .article {
+    margin: 4px 0 10px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
   .example {
     font-size: 13px;
