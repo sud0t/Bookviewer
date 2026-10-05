@@ -1371,12 +1371,24 @@
   }
   .resume-cover {
     flex: none;
-    width: 56px;
-    aspect-ratio: 2 / 3;
+    width: 76px;
     border-radius: 4px;
     overflow: hidden;
     background: var(--surface-2);
-    box-shadow: var(--shadow);
+    /* the hairline keeps a white cover's edge visible on a light card */
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--fg) 14%, transparent),
+      var(--shadow);
+  }
+  /* the cover at its own proportions, whole: cropping one this small to 2:3
+     cuts into its title */
+  .resume-cover :global(img) {
+    height: auto;
+    min-height: 84px;
+    max-height: 124px;
+  }
+  .resume-cover:not(:has(img)) {
+    aspect-ratio: 2 / 3;
   }
   .resume-text {
     flex: 1;
